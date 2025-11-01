@@ -94,3 +94,5 @@ pip-log.txt
 !programming_exercises/exercise4_mpc/ex4_sol_mpc.ipynb
 !programming_exercises/exercise5_offset_free/ex5_offset_free.ipynb
 !programming_exercises/exercise5_offset_free/ex5_sol_offset_free.ipynb
+!programming_exercises/exercise6_robust_mpc/ex6_robust_mpc.ipynb
+!programming_exercises/exercise6_robust_mpc/ex6_sol_robust_mpc.ipynb
