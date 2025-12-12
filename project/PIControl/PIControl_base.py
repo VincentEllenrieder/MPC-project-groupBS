@@ -22,10 +22,9 @@ class PIControl_base:
     u_max: float = 10.0
 
 
-    def __init__(self, Kp: float, Ki: float, Kb: float, Ts: float, xs: float, u_min: float, u_max: float) -> None:
+    def __init__(self, Kp: float, Ki: float, Ts: float, xs: float, u_min: float, u_max: float) -> None:
         self.Kp = Kp
         self.Ki = Ki
-        self.Kb = Kb
         self.Ts = Ts
         self.xs = xs
         self.u_min = u_min
