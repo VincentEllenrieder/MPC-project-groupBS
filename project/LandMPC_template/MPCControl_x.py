@@ -3,9 +3,9 @@ import numpy as np
 from .MPCControl_base import MPCControl_base
 
 
-class MPCControl_zvel(MPCControl_base):
-    x_ids: np.ndarray = np.array([8])
-    u_ids: np.ndarray = np.array([2])
+class MPCControl_x(MPCControl_base):
+    x_ids: np.ndarray = np.array([1, 4, 6, 9])
+    u_ids: np.ndarray = np.array([1])
 
     def _setup_controller(self) -> None:
         #################################################

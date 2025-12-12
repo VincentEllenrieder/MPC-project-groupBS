@@ -41,36 +41,20 @@ class RocketBase(RocketParams):
 
         sys: Dict[str, Any] = {}
         sys["StateName"] = [
-            "wx",
-            "wy",
-            "wz",
-            "phi",
-            "theta",
-            "psi",
-            "vE",
-            "vN",
-            "vU",
-            "posE",
-            "posN",
-            "posU"
+            "wx", "wy", "wz",
+            "alpha", "beta", "gamma",
+            "vx", "vy", "vz",
+            "x", "y", "z"
         ]
         sys["StateUnit"] = [
-            "rad/s",
-            "rad/s",
-            "rad/s",
-            "rad",
-            "rad",
-            "rad",
-            "m/s",
-            "m/s",
-            "m/s",
-            "m",
-            "m",
-            "m"
+            "rad/s", "rad/s", "rad/s",
+            "rad", "rad", "rad",
+            "m/s", "m/s", "m/s",
+            "m", "m", "m"
         ]
 
-        sys["InputName"] = ["dR", "dP", "dF", "dFdiff"]
-        sys["InputUnit"] = ["rad", "rad", "-", "-"]
+        sys["InputName"] = ["d1", "d2", "Pavg", "Pdiff"]
+        sys["InputUnit"] = ["rad", "rad", "%", "%"]
 
         sys["OutputName"] = sys["StateName"] + [
             "spec_nongrav_force_x",
