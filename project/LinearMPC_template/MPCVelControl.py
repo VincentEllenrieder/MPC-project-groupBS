@@ -7,6 +7,8 @@ from .MPCControl_xvel import MPCControl_xvel
 from .MPCControl_yvel import MPCControl_yvel
 from .MPCControl_zvel import MPCControl_zvel
 
+import itertools
+
 
 class MPCVelControl:
     mpc_x: MPCControl_xvel

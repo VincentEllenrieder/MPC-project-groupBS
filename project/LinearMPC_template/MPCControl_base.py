@@ -4,6 +4,8 @@ from control import dlqr
 from mpt4py import Polyhedron
 from scipy.signal import cont2discrete
 from mpt4py import Polyhedron
+import matplotlib.pyplot as plt
+import itertools
 
 
 class MPCControl_base:
@@ -50,14 +52,13 @@ class MPCControl_base:
         self.A, self.B = self._discretize(A_red, B_red, Ts)
         self.xs = xs[self.x_ids]
         self.us = us[self.u_ids]
-
         self._setup_controller()
 
     def _setup_controller(self) -> None:
         # This is overridden by the subclasses (xvel, yvel, etc.)
         pass
 
-    def _build_problem(self, Q, R, P, u_min, u_max, x_min=None, x_max=None, term_set=None):
+    def _build_problem(self, Q, R, P, u_min, u_max, x_min=None, x_max=None):
         """
         Helper method to construct the generic MPC problem.
         Called by subclasses in _setup_controller().
@@ -97,10 +98,10 @@ class MPCControl_base:
         term_err = self.x_var[:, self.N] - self.x_ref
         cost += cp.quad_form(term_err, P) # Terminal Cost
 
-        if term_set is not None:
+        if self.term_set is not None:
             # Terminal Set: Ax <= b
             # Note: Polyhedron.A and .b are used here
-            constraints.append(term_set.A @ term_err <= term_set.b)
+            constraints.append(self.term_set.A @ term_err <= self.term_set.b)
 
         # 4. Create Problem
         self.ocp = cp.Problem(cp.Minimize(cost), constraints)
@@ -116,17 +117,11 @@ class MPCControl_base:
     def get_u(
         self, x0: np.ndarray, x_target: np.ndarray = None, u_target: np.ndarray = None
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        # 1. Update Parameters
-        # x0 passed in is full state; we need to reduce it and subtract trim
-
-        #x_sub = x0[self.x_ids] - self.xs
-        #self.x_init.value = x_sub
 
         self.x_init.value = x0 - self.xs
 
         if x_target is not None:
             # For tracking: Target relative to trim
-            #self.x_ref.value = x_target[self.x_ids] - self.xs
             self.x_ref.value = x_target - self.xs
         else:
             self.x_ref.value = np.zeros(self.nx)
@@ -176,11 +171,73 @@ class MPCControl_base:
             if O == Oprev:
                 converged = True
                 break
-            print('Iteration {0}... not yet converged\n'.format(itr))
+            #print('Iteration {0}... not yet converged\n'.format(itr))
             itr += 1
         
         if converged:
             print('Maximum invariant set successfully computed after {0} iterations.'.format(itr))
         return O
+    
+    def plot_all_projections(self, state_names=None, figsize=(15, 5)):
+        """
+        Automatically plots all 2D projections of the given invariant set.
+        
+        Args:
+            term_set: The Polyhedron object (invariant set) to plot.
+            state_names: List of strings (e.g., ['w_y', 'beta', 'v_x']) for axis labels.
+            figsize: Tuple for the figure size.
+        """
+        import matplotlib.pyplot as plt
+        import itertools
+        if self.term_set is None:
+            print("No terminal set to plot.")
+            return
+
+        dim = self.term_set.dim
+        
+        # Case 1: 1D System (Z-vel)
+        if dim < 2:
+            print("System is 1D (Vertical). Invariant Set A : ", self.term_set.A , "\nb : ", self.term_set.b)
+            return
+
+        # Case 2: 2D System (Roll) - Just one plot
+        if dim == 2:
+            fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+            self.term_set.plot(ax=ax, color='purple', alpha=0.5)
+            if state_names:
+                ax.set_xlabel(state_names[0])
+                ax.set_ylabel(state_names[1])
+            ax.set_title("Invariant Set (2D)")
+            ax.grid(True)
+            plt.show()
+            return
+
+        # Case 3: 3D System (X-vel, Y-vel) - 3 Plots
+        # We need pairs: (0,1), (0,2), (1,2)
+        pairs = list(itertools.combinations(range(dim), 2))
+        
+        fig, axs = plt.subplots(1, len(pairs), figsize=figsize)
+        fig.suptitle(f"Invariant Set Projections (Dim: {dim})", fontsize=16)
+
+        for i, (d1, d2) in enumerate(pairs):
+            # Project onto the specific pair of dimensions
+            proj = self.term_set.projection((d1, d2))
+            
+            # Plot
+            proj.plot(ax=axs[i], color='teal', alpha=0.5)
+            
+            # Labels
+            if state_names:
+                axs[i].set_xlabel(state_names[d1])
+                axs[i].set_ylabel(state_names[d2])
+            else:
+                axs[i].set_xlabel(f"State {d1}")
+                axs[i].set_ylabel(f"State {d2}")
+            
+            axs[i].grid(True)
+            axs[i].set_title(f"{state_names[d1] if state_names else d1} vs {state_names[d2] if state_names else d2}")
+
+        plt.tight_layout()
+        plt.show()
 
     
