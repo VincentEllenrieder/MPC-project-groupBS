@@ -7,26 +7,7 @@ class MPCControl_xvel(MPCControl_base):
     x_ids: np.ndarray = np.array([1, 4, 6])
     u_ids: np.ndarray = np.array([1])
 
-    def _setup_controller(self) -> None:
-        #################################################
-        # YOUR CODE HERE
+    Q: np.ndarray = np.eye(x_ids.shape[0])
+    R: np.ndarray = np.eye(u_ids.shape[0])
 
-        self.ocp = ...
-
-        # YOUR CODE HERE
-        #################################################
-
-    def get_u(
-        self, x0: np.ndarray, x_target: np.ndarray = None, u_target: np.ndarray = None
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        #################################################
-        # YOUR CODE HERE
-
-        u0 = ...
-        x_traj = ...
-        u_traj = ...
-
-        # YOUR CODE HERE
-        #################################################
-
-        return u0, x_traj, u_traj
+    subsys_name: str = "x"

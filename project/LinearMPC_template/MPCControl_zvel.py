@@ -7,26 +7,7 @@ class MPCControl_zvel(MPCControl_base):
     x_ids: np.ndarray = np.array([8])
     u_ids: np.ndarray = np.array([2])
 
-    def _setup_controller(self) -> None:
-        #################################################
-        # YOUR CODE HERE
+    Q: np.ndarray = np.array([[1]])
+    R: np.ndarray = np.array([[1]])
 
-        self.ocp = ...
-
-        # YOUR CODE HERE
-        #################################################
-
-    def get_u(
-        self, x0: np.ndarray, x_target: np.ndarray = None, u_target: np.ndarray = None
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        #################################################
-        # YOUR CODE HERE
-
-        u0 = ...
-        x_traj = ...
-        u_traj = ...
-
-        # YOUR CODE HERE
-        #################################################
-
-        return u0, x_traj, u_traj
+    subsys_name: str = "z"

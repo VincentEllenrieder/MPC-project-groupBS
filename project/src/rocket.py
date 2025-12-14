@@ -183,7 +183,7 @@ class Rocket(RocketBase):
         x = ca.SX.sym("x", self.nx)
         u = ca.SX.sym("u", self.nu)
 
-        # Objective: minimize squared dynamics residual
+        # Objective: minimize squared dynamics residual, i.e. we want sum of squares of x_s_dot to be as small as possible for a certain equilibrium x_s
         xdot, _ = self.f_symbolic(x, u)
         obj = ca.sumsqr(xdot)
 
@@ -201,7 +201,7 @@ class Rocket(RocketBase):
         lb = np.concatenate([lbx, lby])
         ub = np.concatenate([ubx, uby])
 
-        # Initial guess: hover-ish throttle
+        # Initial guess: hover-ish throttle around the estimated reference (point where we think equilibrium might be at, or equivalently, the track point for the MPC)
         y0 = np.zeros(self.nx + self.nu)
         y0 = np.hstack([x_ref, np.zeros(self.nu)])	
         y0[self.nx + 2] = 60.0  # guess Pavg ≈ 60%
@@ -285,8 +285,8 @@ class Rocket(RocketBase):
         fA = ca.Function("A_func", [x_sym, u_sym], [A])
         fB = ca.Function("B_func", [x_sym, u_sym], [B])
 
-        A_num = np.array(fA(xs, us))
-        B_num = np.array(fB(xs, us))
+        A_num = np.array(fA(xs, us)) # evaluate Jacobian (A) in x_s and u_s
+        B_num = np.array(fB(xs, us)) # evaluate Jacobian (B) in x_s and u_s
 
         sys = LTISys(A_num, B_num, xs=xs, us=us)
         # self.sys = sys
@@ -372,6 +372,7 @@ class Rocket(RocketBase):
                 print(f"Simulating time {T[k]:.2f}", end=':')
                 U[:, k] = current_rocket.fuel_dynamics(U[:, k], self.Ts)
                 X[:, k+1] = Rocket.integrate_step(current_rocket.f, X[:, k], U[:, k], self.Ts)
+                #print(f"\n X = {X[:, k+1]}")
                 print('', end='\n')
             
         return T, X[:,:-1], U
