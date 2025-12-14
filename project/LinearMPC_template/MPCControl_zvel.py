@@ -4,29 +4,26 @@ from .MPCControl_base import MPCControl_base
 
 
 class MPCControl_zvel(MPCControl_base):
-    x_ids: np.ndarray = np.array([8])
-    u_ids: np.ndarray = np.array([2])
+    x_ids: np.ndarray = np.array([8])   # vz
+    u_ids: np.ndarray = np.array([2])   # Pavg
 
-    def _setup_controller(self) -> None:
-        #################################################
-        # YOUR CODE HERE
+class MPCControl_zvel_tuned_default(MPCControl_base):
+    x_ids: np.ndarray = np.array([8])   # vz
+    u_ids: np.ndarray = np.array([2])   # Pavg
 
-        self.ocp = ...
+    vz_max = 5.0
+    dP_max = min(80 - 66.7, 66.7 - 40.0)  # m/s per control step
 
-        # YOUR CODE HERE
-        #################################################
+    Q = np.array([[1/(vz_max**2)]])
+    R = np.array([[1/(dP_max**2)]])
 
-    def get_u(
-        self, x0: np.ndarray, x_target: np.ndarray = None, u_target: np.ndarray = None
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        #################################################
-        # YOUR CODE HERE
+class MPCControl_zvel_tuned_final(MPCControl_base):
+    x_ids: np.ndarray = np.array([8])   # vz
+    u_ids: np.ndarray = np.array([2])   # Pavg
 
-        u0 = ...
-        x_traj = ...
-        u_traj = ...
+    vz_max = 5.0
+    dP_max = min(80 - 66.7, 66.7 - 40.0)  # m/s per control step
 
-        # YOUR CODE HERE
-        #################################################
+    Q = np.array([[20 * 1/(vz_max**2)]])
+    R = np.array([[(1/(dP_max**2)) / 2]])
 
-        return u0, x_traj, u_traj

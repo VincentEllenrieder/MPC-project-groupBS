@@ -79,27 +79,76 @@ class MPCControl_base:
         x = self.x
         u = self.u
 
-        Q = np.eye(self.nx)
-        R = np.eye(self.nu)
+        #Q = np.eye(self.nx)
+        #R = np.eye(self.nu)
+
+        # allow subsystem-specific tunings
+        Q = getattr(self, "Q", np.eye(self.nx))
+        R = getattr(self, "R", np.eye(self.nu))
 
         K, P, _ = dlqr(self.A, self.B, Q, R)
 
+        # Cost function
         cost = 0
         for k in range(self.N):
             cost += cp.quad_form(x[:, k], Q) + cp.quad_form(u[:, k], R)
         cost += cp.quad_form(x[:, self.N], P)
 
+        # Constraints
         constraints = []
         u_min_abs = self.LBU[self.u_ids]
         u_max_abs = self.UBU[self.u_ids]
         x_min_abs = self.LBX[self.x_ids]
         x_max_abs = self.UBX[self.x_ids]
 
-        u_min = u_min_abs - self.us
-        u_max = u_max_abs - self.us
-        x_min = x_min_abs - self.xs
-        x_max = x_max_abs - self.xs
+        # Add small margin to avoid numerical issues
+        margin_u = 1e-3
+        margin_x = 1e-3
 
+        u_min = (u_min_abs - self.us) + margin_u
+        u_max = (u_max_abs - self.us) - margin_u
+        x_min = (x_min_abs - self.xs) + margin_x
+        x_max = (x_max_abs - self.xs) - margin_x
+
+        
+        # X0 for invariant set computation only use finite bounds
+        Hx_list = []
+        hx_list = []
+
+        for i in range(self.nx):
+            if np.isfinite(x_max[i]):
+                e_i = np.zeros(self.nx)
+                e_i[i] = 1.0 # this picks out x_i
+                Hx_list.append(e_i)
+                hx_list.append(x_max[i])
+            if np.isfinite(x_min[i]):
+                e_i = np.zeros(self.nx)
+                e_i[i] = -1.0 # corresponds to -x_i
+                Hx_list.append(e_i)
+                hx_list.append(-x_min[i])
+
+        Hx = np.vstack(Hx_list) if Hx_list else np.zeros((0, self.nx))
+        hx = np.array(hx_list)   if hx_list else np.zeros((0,))
+
+        Hu = np.vstack([np.eye(self.nu), -np.eye(self.nu)])
+        hu = np.hstack([u_max, -u_min])
+
+        Hx_u = -Hu @ K
+        hx_u = hu
+
+        H0 = np.vstack([Hx, Hx_u]) # (2*nx + 2*nu) x nx
+        h0 = np.hstack([hx, hx_u]) # (2*nx + 2*nu)
+
+        X0 = Polyhedron.from_Hrep(H0, h0)
+
+        #print("H0 shape:", H0.shape, "h0 shape:", h0.shape)
+        #print("X0 dim:", X0.dim)
+        #print("X0 empty?", X0.is_empty)
+
+        A_cl = self.A - self.B @ K
+        self.Xf = self._max_invariant_set(A_cl, X0)
+      
+        # Constraints over the horizon
         for k in range(self.N):
             # System dynamics constraints
             constraints += [x[:, k+1] == self.A @ x[:, k] + self.B @ u[:, k]]
@@ -109,8 +158,10 @@ class MPCControl_base:
             constraints += [x_min <= x[:, k], x[:, k] <= x_max]
         # Init state constraint    
         constraints += [x[:, 0] == self.x0_param]
-        # Terminal state constraint
-        constraints += [x_min <= x[:, self.N], x[:, self.N] <= x_max]
+        
+        # Terminal constraint x_N ∈ X_f
+        Ff, ff = self.Xf.A, self.Xf.b
+        constraints += [Ff @ x[:, self.N] <= ff]
 
         self.ocp = cp.Problem(cp.Minimize(cost), constraints)
 
@@ -130,17 +181,59 @@ class MPCControl_base:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         #################################################
         # YOUR CODE HERE
-        x0_sub = x0[self.x_ids]
+        x0_sub = x0 # no slicing
         self.x0_param.value = x0_sub - self.xs
-        self.ocp.solve(solver=cp.OSQP, warm_start=True)
+
+        # Verbose solver output for debugging
+        self.ocp.solve(
+            solver=cp.OSQP,
+            warm_start=True,
+            max_iter=20000,
+            eps_abs=1e-4,
+            eps_rel=1e-4,
+        )
+        
+        #self.ocp.solve(solver=cp.OSQP, warm_start=True)
+
+        if self.ocp.status not in ["optimal", "optimal_inaccurate"]:
+            raise RuntimeError(f"MPC QP infeasible or failed, status = {self.ocp.status}")
+
 
         u0_delta = self.u[:, 0].value
         u0 = self.us + u0_delta
 
-        x_traj = self.x.value
-        u_traj = self.u.value
+        x_traj = self.x.value + self.xs[:, None]
+        u_traj = self.u.value + self.us[:, None]
 
         # YOUR CODE HERE
         #################################################
 
         return u0, x_traj, u_traj
+    
+    @staticmethod
+    def _max_invariant_set(A_cl, X: Polyhedron, max_iter = 20) -> Polyhedron:
+        """
+        Compute invariant set for an autonomous linear time invariant system x^+ = A_cl x
+        """
+        O = X
+        itr = 1
+        converged = False
+        while itr < max_iter:
+            Oprev = O
+            F, f = O.A, O.b
+            # Compute the pre-set
+            # O = Polyhedron.from_Hrep(np.vstack((F, F @ A_cl)), np.vstack((f, f)).reshape((-1,)))
+            preO = Polyhedron.from_Hrep(F @ A_cl, f)
+            O = preO.intersect(O)
+            
+            if O == Oprev:
+                converged = True
+                break
+            print('Iteration {0}... not yet converged\n'.format(itr))
+            itr += 1
+        
+        if converged:
+            print('Maximum invariant set successfully computed after {0} iterations.'.format(itr))
+        return O
+
+    
