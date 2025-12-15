@@ -69,33 +69,42 @@ class MPCControl_base:
 
         self._setup_controller()
 
+        # Track last reference used to build Xf
+        self._last_xref = None
+        self._last_uref = None
+        self._last_H = None
+        self._last_h = None
+
     def _setup_controller(self) -> None:
         #################################################
         # YOUR CODE HERE
-        self.x0_param = cp.Parameter(self.nx)
-        self.x = cp.Variable((self.nx, self.N+1))  # columns: x_0 ... x_N
-        self.u = cp.Variable((self.nu, self.N))    # columns: u_0 ... u_{N-1}
 
-        x = self.x
-        u = self.u
+        self.Ff_param = cp.Parameter((1, self.nx))   # will resize later if needed
+        self.ff_param = cp.Parameter(1)
 
-        #Q = np.eye(self.nx)
-        #R = np.eye(self.nu)
+        # placeholder terminal constraint (will be overwritten once we know Xf size)
+        self.terminal_constraint = (self.Ff_param @ self.dx[:, self.N] <= self.ff_param)
+        cons += [self.terminal_constraint]
 
         # allow subsystem-specific tunings
         Q = getattr(self, "Q", np.eye(self.nx))
         R = getattr(self, "R", np.eye(self.nu))
 
+        # LQR terminal ingredients
         K, P, _ = dlqr(self.A, self.B, Q, R)
+        self.K = K
+        self.P = P
 
-        # Cost function
-        cost = 0
-        for k in range(self.N):
-            cost += cp.quad_form(x[:, k], Q) + cp.quad_form(u[:, k], R)
-        cost += cp.quad_form(x[:, self.N], P)
+        # params: initial delta and reference
+        self.dx0_param  = cp.Parameter(self.nx)
+        self.xref_param = cp.Parameter(self.nx)
+        self.uref_param = cp.Parameter(self.nu)
 
-        # Constraints
-        constraints = []
+        # decision variables in DELTA coordinates
+        dx = cp.Variable((self.nx, self.N + 1))
+        du = cp.Variable((self.nu, self.N))
+
+        # bounds (absolute -> reduced)
         u_min_abs = self.LBU[self.u_ids]
         u_max_abs = self.UBU[self.u_ids]
         x_min_abs = self.LBX[self.x_ids]
@@ -105,65 +114,36 @@ class MPCControl_base:
         margin_u = 1e-3
         margin_x = 1e-3
 
-        u_min = (u_min_abs - self.us) + margin_u
-        u_max = (u_max_abs - self.us) - margin_u
-        x_min = (x_min_abs - self.xs) + margin_x
-        x_max = (x_max_abs - self.xs) - margin_x
+        # shifted bounds in delta coordinates
+        dx_min = (x_min_abs - self.xref_param) + margin_x
+        dx_max = (x_max_abs - self.xref_param) - margin_x
+        du_min = (u_min_abs - self.uref_param) + margin_u
+        du_max = (u_max_abs - self.uref_param) - margin_u
 
-        
-        # X0 for invariant set computation only use finite bounds
-        Hx_list = []
-        hx_list = []
-
-        for i in range(self.nx):
-            if np.isfinite(x_max[i]):
-                e_i = np.zeros(self.nx)
-                e_i[i] = 1.0 # this picks out x_i
-                Hx_list.append(e_i)
-                hx_list.append(x_max[i])
-            if np.isfinite(x_min[i]):
-                e_i = np.zeros(self.nx)
-                e_i[i] = -1.0 # corresponds to -x_i
-                Hx_list.append(e_i)
-                hx_list.append(-x_min[i])
-
-        Hx = np.vstack(Hx_list) if Hx_list else np.zeros((0, self.nx))
-        hx = np.array(hx_list)   if hx_list else np.zeros((0,))
-
-        Hu = np.vstack([np.eye(self.nu), -np.eye(self.nu)])
-        hu = np.hstack([u_max, -u_min])
-
-        Hx_u = -Hu @ K
-        hx_u = hu
-
-        H0 = np.vstack([Hx, Hx_u]) # (2*nx + 2*nu) x nx
-        h0 = np.hstack([hx, hx_u]) # (2*nx + 2*nu)
-
-        X0 = Polyhedron.from_Hrep(H0, h0)
-
-        #print("H0 shape:", H0.shape, "h0 shape:", h0.shape)
-        #print("X0 dim:", X0.dim)
-        #print("X0 empty?", X0.is_empty)
-
-        A_cl = self.A - self.B @ K
-        self.Xf = self._max_invariant_set(A_cl, X0)
-      
-        # Constraints over the horizon
+        # cost
+        cost = 0
         for k in range(self.N):
-            # System dynamics constraints
-            constraints += [x[:, k+1] == self.A @ x[:, k] + self.B @ u[:, k]]
-            # Input constraints
-            constraints += [u_min <= u[:, k], u[:, k] <= u_max]
-            # State constraints
-            constraints += [x_min <= x[:, k], x[:, k] <= x_max]
-        # Init state constraint    
-        constraints += [x[:, 0] == self.x0_param]
-        
-        # Terminal constraint x_N ∈ X_f
-        Ff, ff = self.Xf.A, self.Xf.b
-        constraints += [Ff @ x[:, self.N] <= ff]
+            cost += cp.quad_form(dx[:, k], Q) + cp.quad_form(du[:, k], R)
+        cost += cp.quad_form(dx[:, self.N], P)
 
-        self.ocp = cp.Problem(cp.Minimize(cost), constraints)
+        # constraints
+        cons = [dx[:, 0] == self.dx0_param]
+        for k in range(self.N):
+            cons += [dx[:, k+1] == self.A @ dx[:, k] + self.B @ du[:, k]]
+            cons += [dx_min <= dx[:, k], dx[:, k] <= dx_max]
+            cons += [du_min <= du[:, k], du[:, k] <= du_max]
+
+
+        # store for later updates
+        self.dx = dx
+        self.du = du
+
+        # Build OCP WITHOUT terminal constraint (we add it later once Xf is numeric)
+        self.ocp = cp.Problem(cp.Minimize(cost), cons)
+
+        # terminal set placeholder
+        self.Xf = None
+        self.terminal_constraint = None
 
         # YOUR CODE HERE
         #################################################
@@ -181,10 +161,37 @@ class MPCControl_base:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         #################################################
         # YOUR CODE HERE
-        x0_sub = x0 # no slicing
-        self.x0_param.value = x0_sub - self.xs
 
-        # Verbose solver output for debugging
+        # x0 is already reduced when called from the subsystem test,
+        # OR it’s full state but sliced before calling in your notebook.
+
+        # reference defaults to trim (regulation)
+        x_ref = self.xs if x_target is None else x_target
+        u_ref = self.us if u_target is None else u_target
+
+        self.xref_param.value = x_ref
+        self.uref_param.value = u_ref
+        self.dx0_param.value  = x0 - x_ref
+
+        # Rebuild terminal set if reference changed
+        if (self._last_xref is None or
+            not np.allclose(x_ref, self._last_xref) or
+            not np.allclose(u_ref, self._last_uref)):
+
+            self.Xf = self._build_terminal_set_for_ref(x_ref, u_ref)
+
+            # remove old terminal constraint
+            if self.terminal_constraint is not None:
+                self.ocp.constraints.remove(self.terminal_constraint)
+
+            Ff, ff = self.Xf.A, self.Xf.b
+            self.terminal_constraint = (Ff @ self.dx[:, self.N] <= ff)
+            self.ocp.constraints.append(self.terminal_constraint)
+
+            self._last_xref = x_ref.copy()
+            self._last_uref = u_ref.copy()
+
+
         self.ocp.solve(
             solver=cp.OSQP,
             warm_start=True,
@@ -192,23 +199,61 @@ class MPCControl_base:
             eps_abs=1e-4,
             eps_rel=1e-4,
         )
-        
-        #self.ocp.solve(solver=cp.OSQP, warm_start=True)
-
         if self.ocp.status not in ["optimal", "optimal_inaccurate"]:
-            raise RuntimeError(f"MPC QP infeasible or failed, status = {self.ocp.status}")
+            raise RuntimeError(f"MPC failed: {self.ocp.status}")
 
+        du0 = self.du[:, 0].value
+        u0  = u_ref + du0
 
-        u0_delta = self.u[:, 0].value
-        u0 = self.us + u0_delta
+        x_traj = self.dx.value + x_ref[:, None]
+        u_traj = self.du.value + u_ref[:, None]
 
-        x_traj = self.x.value + self.xs[:, None]
-        u_traj = self.u.value + self.us[:, None]
-
+        return u0, x_traj, u_traj
+    
         # YOUR CODE HERE
         #################################################
 
-        return u0, x_traj, u_traj
+
+    def _build_terminal_set_for_ref(self, x_ref, u_ref):
+        """
+        Build terminal invariant set for given reference (x_ref, u_ref)
+        """
+
+        # delta bounds around THIS reference
+        dx_min = self.LBX[self.x_ids] - x_ref
+        dx_max = self.UBX[self.x_ids] - x_ref
+        du_min = self.LBU[self.u_ids] - u_ref
+        du_max = self.UBU[self.u_ids] - u_ref
+
+        Hx_list, hx_list = [], []
+
+        for i in range(self.nx):
+            if np.isfinite(dx_max[i]):
+                e = np.zeros(self.nx); e[i] = 1.0
+                Hx_list.append(e); hx_list.append(dx_max[i])
+            if np.isfinite(dx_min[i]):
+                e = np.zeros(self.nx); e[i] = -1.0
+                Hx_list.append(e); hx_list.append(-dx_min[i])
+
+        Hx = np.vstack(Hx_list)
+        hx = np.array(hx_list)
+
+        Hu = np.vstack([np.eye(self.nu), -np.eye(self.nu)])
+        hu = np.hstack([du_max, -du_min])
+
+        # enforce terminal feedback du = -K dx
+        Hx_u = -Hu @ self.K
+        hx_u = hu
+
+        H0 = np.vstack([Hx, Hx_u])
+        h0 = np.hstack([hx, hx_u])
+
+        X0 = Polyhedron.from_Hrep(H0, h0)
+        Acl = self.A - self.B @ self.K
+
+        return self._max_invariant_set(Acl, X0)
+
+
     
     @staticmethod
     def _max_invariant_set(A_cl, X: Polyhedron, max_iter = 20) -> Polyhedron:
