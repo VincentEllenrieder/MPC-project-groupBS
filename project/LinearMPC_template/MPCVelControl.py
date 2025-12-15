@@ -50,6 +50,7 @@ class MPCVelControl:
         self,
         t0: float, # initial timestamp 
         x0: np.ndarray,
+        show_Xf: bool = False,
         x_target: np.ndarray = None, 
         u_target: np.ndarray = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -72,6 +73,7 @@ class MPCVelControl:
         u0[self.mpc_x.u_ids], x_traj[self.mpc_x.x_ids, :], u_traj[self.mpc_x.u_ids, :] = (
             self.mpc_x.get_u(
                 x0[self.mpc_x.x_ids],
+                show_Xf,
                 x_target[self.mpc_x.x_ids],
                 u_target[self.mpc_x.u_ids],
             )
@@ -79,6 +81,7 @@ class MPCVelControl:
         u0[self.mpc_y.u_ids], x_traj[self.mpc_y.x_ids, :], u_traj[self.mpc_y.u_ids, :] = (
             self.mpc_y.get_u(
                 x0[self.mpc_y.x_ids],
+                show_Xf,
                 x_target[self.mpc_y.x_ids],
                 u_target[self.mpc_y.u_ids],
             )
@@ -86,6 +89,7 @@ class MPCVelControl:
         u0[self.mpc_z.u_ids], x_traj[self.mpc_z.x_ids, :], u_traj[self.mpc_z.u_ids, :] = (
             self.mpc_z.get_u(
                 x0[self.mpc_z.x_ids],
+                show_Xf,
                 x_target[self.mpc_z.x_ids],
                 u_target[self.mpc_z.u_ids],
             )
@@ -93,6 +97,7 @@ class MPCVelControl:
         u0[self.mpc_roll.u_ids], x_traj[self.mpc_roll.x_ids, :], u_traj[self.mpc_roll.u_ids, :] = ( 
             self.mpc_roll.get_u(
                 x0[self.mpc_roll.x_ids],
+                show_Xf,
                 x_target[self.mpc_roll.x_ids],
                 u_target[self.mpc_roll.u_ids],
             )
@@ -100,15 +105,15 @@ class MPCVelControl:
 
         return u0, x_traj, u_traj, t_traj
 
-    def plot_open_loop_trajectories(
+    def plot_trajectories(
         self,
-        t_ol: np.ndarray,
-        x_ol: np.ndarray,
-        u_ol: np.ndarray,
+        t: np.ndarray,
+        x: np.ndarray,
+        u: np.ndarray,
         x_names=None,   # optional list of 12 labels in full-state order
         u_names=None,   # optional list of 4 labels in full-input order
-        state_ids=(6, 7, 8, 5),   # v_x, v_y, v_z, roll(gamma) in YOUR convention
-        input_ids=(0, 1, 2, 3),   # dR, dP, Pavg, Pdiff in YOUR convention
+        state_ids=(6, 7, 8, 5),   # v_x, v_y, v_z, roll(gamma)
+        input_ids=(0, 1, 2, 3),   # dR, dP, Pavg, Pdiff
         deg_states=(5,),          # which state_ids should be shown in degrees (roll)
         deg_inputs=(0, 1),        # which input_ids should be shown in degrees (dR, dP)
         title_states="Open-loop states",
@@ -120,10 +125,10 @@ class MPCVelControl:
         t_ol: shape (N+1,)
         """
 
-        t_ol = np.asarray(t_ol).ravel()
-        assert x_ol.ndim == 2 and u_ol.ndim == 2, "x_ol and u_ol must be 2D"
-        assert x_ol.shape[1] == t_ol.size, "x_ol and t_ol length mismatch"
-        assert u_ol.shape[1] == t_ol.size - 1, "u_ol must have N samples if x_ol has N+1"
+        t = np.asarray(t).ravel()
+        assert x.ndim == 2 and u.ndim == 2, "x_ol and u_ol must be 2D"
+        assert x.shape[1] == t.size, "x_ol and t_ol length mismatch"
+        assert u.shape[1] == t.size - 1, "u_ol must have N samples if x_ol has N+1"
 
         # Default labels if none provided
         if x_names is None:
@@ -143,9 +148,9 @@ class MPCVelControl:
             axsS = [axsS]
 
         for ax, sid in zip(axsS, state_ids):
-            y = x_ol[sid, :]
+            y = x[sid, :]
             y_plot = np.rad2deg(y) if sid in deg_states else y
-            ax.plot(t_ol, y_plot)
+            ax.plot(t, y_plot)
             ax.set_title(x_names[sid])
             ax.grid(True)
             ax.set_xlabel("t [s]")
@@ -161,9 +166,9 @@ class MPCVelControl:
             axsU = [axsU]
 
         for ax, uid in zip(axsU, input_ids):
-            y = u_ol[uid, :]
+            y = u[uid, :]
             y_plot = np.rad2deg(y) if uid in deg_inputs else y
-            ax.step(t_ol[:-1], y_plot, where="post")
+            ax.step(t[:-1], y_plot, where="post")
             ax.set_title(u_names[uid])
             ax.grid(True)
             ax.set_xlabel("t [s]")

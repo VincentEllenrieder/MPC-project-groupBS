@@ -75,9 +75,10 @@ class MPCControl_base:
         self.LBU = LBU[self.u_ids]
         self.UBX = UBX[self.x_ids]
         self.LBX = LBX[self.x_ids]
-        print(f"Input upper bounds are {self.UBU} \n")
-        print(f"Input lower bounds are {self.LBU} \n")
-        print(f"State upper bounds are {self.UBX} \n")
+        print(f"Subsystem {self.subsys_name}: \n")
+        print(f"Input upper bounds are {self.UBU}")
+        print(f"Input lower bounds are {self.LBU}")
+        print(f"State upper bounds are {self.UBX}")
         print(f"State lower bounds are {self.LBX} \n")
 
         self.U = Polyhedron.from_bounds(self.LBU, self.UBU)
@@ -179,8 +180,7 @@ class MPCControl_base:
         return A_discrete, B_discrete
 
     def get_u(
-        self, x0: np.ndarray, x_target: np.ndarray = None, u_target: np.ndarray = None, show_Xf: bool = False
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        self, x0: np.ndarray, show_Xf: bool, x_target: np.ndarray = None, u_target: np.ndarray = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         #################################################
         # YOUR CODE HERE
 
