@@ -76,10 +76,6 @@ class MPCControl_base:
         self.x = cp.Variable((self.nx, self.N+1))  # columns: x_0 ... x_N
         self.u = cp.Variable((self.nu, self.N))    # columns: u_0 ... u_{N-1}
 
-        # Reference for this subsystem (same dimension as reduced state)
-        self.xref_param = cp.Parameter(self.nx, value=np.zeros(self.nx))
-        self.uref_param = cp.Parameter(self.nu, value=np.zeros(self.nu))
-
         x = self.x
         u = self.u
 
@@ -97,12 +93,6 @@ class MPCControl_base:
         for k in range(self.N):
             cost += cp.quad_form(x[:, k], Q) + cp.quad_form(u[:, k], R)
         cost += cp.quad_form(x[:, self.N], P)
-
-        # cost in delta coordinates
-        cost_delta = 0
-        for k in range(self.N):
-            cost_delta += cp.quad_form(x[:, k] - self.xref_param, Q) + cp.quad_form(u[:, k] - self.uref_param, R)
-        cost_delta += cp.quad_form(x[:, self.N] - self.xref_param, P)
 
         # Constraints
         constraints = []
