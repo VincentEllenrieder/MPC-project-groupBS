@@ -199,7 +199,6 @@ class MPCControl_base:
         if self.ocp.status not in ["optimal", "optimal_inaccurate"]:
             raise RuntimeError(f"MPC QP infeasible or failed, status = {self.ocp.status}")
 
-
         u0_delta = self.u[:, 0].value
         u0 = self.us + u0_delta
 

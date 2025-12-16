@@ -93,8 +93,20 @@ class MPCControl_base:
         self.uref_param = cp.Parameter(self.nu)  # u_ref (reduced)
 
         # Decision vars (delta)
-        dx = cp.Variable((self.nx, self.N + 1))
-        du = cp.Variable((self.nu, self.N))
+        self.dx = cp.Variable((self.nx, self.N + 1))
+        self.du = cp.Variable((self.nu, self.N))
+
+        dx = self.dx
+        du = self.du
+
+        # Cost
+        cost = 0
+        for k in range(self.N):
+            cost += cp.quad_form(dx[:, k]- self.xref_param, Q) + cp.quad_form(du[:, k]- self.uref_param, R)
+        cost += cp.quad_form(dx[:, self.N]- self.xref_param, P)
+
+        # Constraints
+        constraints = []
 
         # Absolute bounds for this subsystem
         u_min_abs = self.LBU[self.u_ids]
@@ -106,48 +118,59 @@ class MPCControl_base:
         margin_u = 1e-3
         margin_x = 1e-3
 
-        # Shifted bounds in delta coords around reference (slide 6) :contentReference[oaicite:1]{index=1}
-        dx_min = (x_min_abs - self.xref_param) + margin_x
-        dx_max = (x_max_abs - self.xref_param) - margin_x
-        du_min = (u_min_abs - self.uref_param) + margin_u
-        du_max = (u_max_abs - self.uref_param) - margin_u
+        x_min = (x_min_abs - self.xs) + margin_x
+        x_max = (x_max_abs - self.xs) - margin_x
+        u_min = (u_min_abs - self.us) + margin_u
+        u_max = (u_max_abs - self.us) - margin_u
 
-        # Cost
-        cost = 0
+        Hx_list = []
+        hx_list = []
+
+        for i in range(self.nx):
+            if np.isfinite(x_max[i]):
+                e_i = np.zeros(self.nx)
+                e_i[i] = 1.0 # this picks out x_i
+                Hx_list.append(e_i)
+                hx_list.append(x_max[i])
+            if np.isfinite(x_min[i]):
+                e_i = np.zeros(self.nx)
+                e_i[i] = -1.0 # corresponds to -x_i
+                Hx_list.append(e_i)
+                hx_list.append(-x_min[i])
+
+        Hx = np.vstack(Hx_list) if Hx_list else np.zeros((0, self.nx))
+        hx = np.array(hx_list)   if hx_list else np.zeros((0,))
+
+        Hu = np.vstack([np.eye(self.nu), -np.eye(self.nu)])
+        hu = np.hstack([u_max, -u_min])
+
+        Hx_u = -Hu @ K
+        hx_u = hu
+
+        H0 = np.vstack([Hx, Hx_u]) # (2*nx + 2*nu) x nx
+        h0 = np.hstack([hx, hx_u]) # (2*nx + 2*nu)
+
+        X0 = Polyhedron.from_Hrep(H0, h0)
+
+        A_cl = self.A - self.B @ K
+        self.Xf = self._max_invariant_set(A_cl, X0)
+      
+        # Constraints over the horizon
         for k in range(self.N):
-            cost += cp.quad_form(dx[:, k], Q) + cp.quad_form(du[:, k], R)
-        cost += cp.quad_form(dx[:, self.N], P)
+            # System dynamics constraints
+            constraints += [dx[:, k+1] == self.A @ dx[:, k] + self.B @ du[:, k]]
+            # Input constraints
+            constraints += [u_min <= du[:, k], du[:, k] <= u_max]
+            # State constraints
+            constraints += [x_min <= dx[:, k], dx[:, k] <= x_max]
+        # Init state constraint    
+        constraints += [dx[:, 0] == self.dx0_param]
+        
+        # Terminal constraint x_N ∈ X_f
+        Ff, ff = self.Xf.A, self.Xf.b
+        constraints += [Ff @ (dx[:, self.N] - self.xref_param) <= ff]
+        self.ocp = cp.Problem(cp.Minimize(cost), constraints)
 
-        # Constraints
-        cons = [dx[:, 0] == self.dx0_param]
-        for k in range(self.N):
-            cons += [dx[:, k+1] == self.A @ dx[:, k] + self.B @ du[:, k]]
-            cons += [dx_min <= dx[:, k], dx[:, k] <= dx_max]
-            cons += [du_min <= du[:, k], du[:, k] <= du_max]
-        cons += [dx_min <= dx[:, self.N], dx[:, self.N] <= dx_max]
-
-        # -------- Terminal set constraint as parameters --------
-        self.max_F_rows = 250
-        self.Ff_param = cp.Parameter((self.max_F_rows, self.nx))
-        self.ff_param = cp.Parameter(self.max_F_rows)
-
-        # Safe default: "inactive" constraints (0 * x <= big_number)
-        self.Ff_param.value = np.zeros((self.max_F_rows, self.nx))
-        self.ff_param.value = 1e6 * np.ones(self.max_F_rows)
-
-        # Enforce ALL rows; unused rows are made inactive via padding
-        cons += [self.Ff_param @ dx[:, self.N] <= self.ff_param]
-
-        # Store variables
-        self.dx = dx
-        self.du = du
-
-        # Build the optimization problem ONCE
-        self.ocp = cp.Problem(cp.Minimize(cost), cons)
-
-        # cache
-        self._last_xref = None
-        self._last_uref = None
 
         # YOUR CODE HERE
         #################################################
@@ -166,169 +189,48 @@ class MPCControl_base:
         #################################################
         # YOUR CODE HERE
 
-        # x0 is already reduced when called from the subsystem test,
-        # OR it’s full state but sliced before calling in your notebook.
+        # x0 is already reduced when called from MPCVelControl
+        x0_sub = x0
 
-        # D3.2: x_target is scalar ref (vx, vy, vz, gamma)
-        ref = 0.0 if x_target is None else float(x_target)
+        # Build xref_abs in *reduced coordinates*
+        xref_abs = self.xs.copy()  # default: regulate to trim in the reduced state
 
-        # Compute reference steady state
-        x_ref, u_ref = self.steady_state_from_ref(ref)
+        if x_target is not None:
+            if np.isscalar(x_target):
+                # tracking only the tracked state of this subsystem
+                xref_abs[self.tracked_idx] = float(x_target)
+            else:
+                # if someone passes a full 12D target (or reduced target), handle it
+                x_target = np.asarray(x_target).squeeze()
+                if x_target.shape[0] == self.nx:
+                    # already reduced
+                    xref_abs = x_target
+                else:
+                    # full state
+                    xref_abs = x_target[self.x_ids]
 
-        self.xref_param.value = x_ref
-        self.uref_param.value = u_ref
-        self.dx0_param.value  = x0 - x_ref
+        if u_target is None:
+            uref_abs = self.us.copy()
+        else:
+            uref_abs = u_target[self.u_ids]
 
-        # Rebuild terminal set if ref changed
-        if (self._last_xref is None or
-            not np.allclose(x_ref, self._last_xref) or
-            self._last_uref is None or
-            not np.allclose(u_ref, self._last_uref)):
+        # initial condition in delta coords
+        self.dx0_param.value = x0_sub - self.xs         # Δx0
+        self.xref_param.value = xref_abs - self.xs      # Δx_r
+        self.uref_param.value = uref_abs - self.us      # Δu_r  (if you have it)
 
-            Xf = self._build_terminal_set_for_ref(x_ref, u_ref)
-            Ff, ff = Xf.A, Xf.b
-            nF = Ff.shape[0]
-            if nF > self.max_F_rows:
-                raise RuntimeError(f"Xf too large: {nF} rows > {self.max_F_rows}")
-
-            Fpad = np.zeros((self.max_F_rows, self.nx))
-            fpad = 1e6 * np.ones(self.max_F_rows)   # inactive rows: 0*x <= 1e6
-
-            Fpad[:nF, :] = Ff
-            fpad[:nF] = ff
-
-            self.Ff_param.value = Fpad
-            self.ff_param.value = fpad
-
-            self._last_xref = x_ref.copy()
-            self._last_uref = u_ref.copy()
-
-        # Solve
-        self.ocp.solve(solver=cp.OSQP,
-                    warm_start=True,
-                    max_iter=200000, 
-                    eps_abs=1e-4, 
-                    eps_rel=1e-4)
-
-        if self.ocp.status not in ["optimal", "optimal_inaccurate"]:
-            raise RuntimeError(f"MPC failed: {self.ocp.status}")
+        self.ocp.solve(solver=cp.OSQP, warm_start=True, max_iter=20000, eps_abs=1e-4, eps_rel=1e-4)
 
         du0 = self.du[:, 0].value
-        u0  = u_ref + du0
+        u0  = self.us + du0
 
-        x_traj = self.dx.value + x_ref[:, None]
-        u_traj = self.du.value + u_ref[:, None]
+        x_traj = self.dx.value + self.xs[:, None]
+        u_traj = self.du.value + self.us[:, None]
 
         return u0, x_traj, u_traj
 
         # YOUR CODE HERE
         #################################################
-
-    # subclasses must define which reduced state is tracked
-    tracked_idx: int
-
-    def steady_state_from_ref(self, ref):
-        """
-        Exercise-style steady state:
-            min ||u_ref||^2
-            s.t. x_ref = A x_ref + B u_ref
-                x_ref[tracked_idx] = ref
-                x_min <= x_ref <= x_max     (finite bounds only)
-                u_min <= u_ref <= u_max
-        Returns reduced (x_ref, u_ref).
-        """
-        ref = float(ref)
-
-        x = cp.Variable(self.nx)
-        u = cp.Variable(self.nu)
-
-        # bounds for THIS reduced subsystem
-        u_min = self.LBU[self.u_ids]
-        u_max = self.UBU[self.u_ids]
-
-        x_min_abs = self.LBX[self.x_ids]
-        x_max_abs = self.UBX[self.x_ids]
-
-        cons = []
-
-        # input bounds
-        cons += [u_min <= u, u <= u_max]
-
-        # steady-state dynamics
-        cons += [x == self.A @ x + self.B @ u]
-
-        # enforce the scalar reference on the tracked component
-        cons += [x[self.tracked_idx] == ref]
-
-        # state bounds: only enforce where finite (avoid inf constraints)
-        for i in range(self.nx):
-            if np.isfinite(x_min_abs[i]):
-                cons += [x[i] >= x_min_abs[i]]
-            if np.isfinite(x_max_abs[i]):
-                cons += [x[i] <= x_max_abs[i]]
-
-        # objective: keep input effort small (like your exercise)
-        obj = cp.Minimize(cp.sum_squares(u))
-
-        prob = cp.Problem(obj, cons)
-        prob.solve(solver=cp.OSQP, warm_start=True, max_iter=200000)
-
-        if prob.status not in ["optimal", "optimal_inaccurate"]:
-            raise RuntimeError(f"steady_state_from_ref failed: {prob.status}")
-
-        x_ref = np.array(x.value).reshape(-1,)
-        u_ref = np.array(u.value).reshape(-1,)
-
-        return x_ref, u_ref
-
-
-
-    def _build_terminal_set_for_ref(self, x_ref, u_ref):
-        """
-        Build terminal invariant set for given reference (x_ref, u_ref)
-        """
-        # Add small margin to avoid numerical issues
-        margin_x = 1e-3
-        margin_u = 1e-3
-
-
-        # delta bounds around THIS reference
-        dx_min = (self.LBX[self.x_ids] - x_ref) + margin_x
-        dx_max = (self.UBX[self.x_ids] - x_ref) - margin_x
-        du_min = (self.LBU[self.u_ids] - u_ref) + margin_u
-        du_max = (self.UBU[self.u_ids] - u_ref) - margin_u
-
-        Hx_list, hx_list = [], []
-
-        for i in range(self.nx):
-            if np.isfinite(dx_max[i]):
-                e = np.zeros(self.nx); e[i] = 1.0
-                Hx_list.append(e); hx_list.append(dx_max[i])
-            if np.isfinite(dx_min[i]):
-                e = np.zeros(self.nx); e[i] = -1.0
-                Hx_list.append(e); hx_list.append(-dx_min[i])
-
-        if len(Hx_list) == 0:
-            Hx = np.zeros((0, self.nx))
-            hx = np.zeros((0,))
-        else:
-            Hx = np.vstack(Hx_list)
-            hx = np.array(hx_list)
-
-        Hu = np.vstack([np.eye(self.nu), -np.eye(self.nu)])
-        hu = np.hstack([du_max, -du_min])
-
-        # enforce terminal feedback du = -K dx
-        Hx_u = -Hu @ self.K
-        hx_u = hu
-
-        H0 = np.vstack([Hx, Hx_u])
-        h0 = np.hstack([hx, hx_u])
-
-        X0 = Polyhedron.from_Hrep(H0, h0)
-        Acl = self.A - self.B @ self.K
-
-        return self._max_invariant_set(Acl, X0)
     
     @staticmethod
     def _max_invariant_set(A_cl, X: Polyhedron, max_iter = 20) -> Polyhedron:
@@ -349,7 +251,7 @@ class MPCControl_base:
             if O == Oprev:
                 converged = True
                 break
-            print('Iteration {0}... not yet converged\n'.format(itr))
+            #print('Iteration {0}... not yet converged\n'.format(itr))
             itr += 1
         
         if converged:
