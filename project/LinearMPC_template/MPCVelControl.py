@@ -62,7 +62,7 @@ class MPCVelControl:
         if x_target is None: # if no tracking target given, do regulation (stabilize at the origin, as x_s = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
             x_target = self.xs
 
-        if u_target is None: # the final control input in the closed-loop trajectory should be u_s = 0, 0, 66.66666667, 0
+        if u_target is None: # if no tracking given, the final control input in the closed-loop trajectory should be u_s = 0, 0, 66.66666667, 0
             u_target = self.us
 
         # these next 4 blocks of code use the methods get_u incorporated in each subsystem x, y, z and roll for finding :
@@ -104,6 +104,15 @@ class MPCVelControl:
         )
 
         return u0, x_traj, u_traj, t_traj
+    
+    def trim_velocity(self, x_ref: np.ndarray, rocket: Rocket):
+        """
+        x_ref = [omega_x, omega_y, omega_z, alpha, beta, gamma, v_x, v_y, v_z]
+    
+        returns u_target (4,)
+        """
+        
+
 
     def plot_trajectories(
         self,

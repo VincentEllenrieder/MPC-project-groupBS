@@ -98,52 +98,46 @@ class MPCControl_base:
         #################################################
         # YOUR CODE HERE
 
-        self.Delta_x_var = cp.Variable((self.nx, self.N + 1), name='x')
-        self.Delta_u_var = cp.Variable((self.nu, self.N), name='u')
-        self.Delta_x0 = cp.Parameter((self.nx,), name='x0')
-        # self.x_target = cp.Parameter((self.nx,), name='xt')
-        # self.u_target = cp.Parameter((self.nu,), name='ut')
+        self.DDelta_x_var = cp.Variable((self.nx, self.N + 1), name='DDx')
+        self.DDelta_u_var = cp.Variable((self.nu, self.N), name='DDu')
+        self.DDelta_x0 = cp.Parameter((self.nx,), name='Dx0')
+        self.Delta_x_target = cp.Parameter((self.nx,), name='Dxt')
+        self.Delta_u_target = cp.Parameter((self.nu,), name='Dut')
 
         # Costs (objective function)
         cost = 0
         for k in range(self.N):
-            cost += cp.quad_form(self.Delta_x_var[:,k], self.Q)
-            cost += cp.quad_form(self.Delta_u_var[:,k], self.R)
+            cost += cp.quad_form(self.DDelta_x_var[:,k], self.Q)
+            cost += cp.quad_form(self.DDelta_u_var[:,k], self.R)
         
         # Terminal cost
         K, P, _ = dlqr(self.A, self.B, self.Q, self.R)
         K = -K
-        cost += cp.quad_form(self.Delta_x_var[:, -1], P)        
+        cost += cp.quad_form(self.DDelta_x_var[:, -1], P)        
 
         # System (equality) constraint
         constraints = []
-        constraints.append(self.Delta_x_var[:, 0] == self.Delta_x0)
-        constraints.append(self.A @ self.Delta_x_var[:, :-1] + self.B @ self.Delta_u_var == self.Delta_x_var[:, 1:])
+        constraints.append(self.DDelta_x_var[:, 0] == self.DDelta_x0)
+        constraints.append(self.A @ self.DDelta_x_var[:, :-1] + self.B @ self.DDelta_u_var == self.DDelta_x_var[:, 1:])
 
         # Inequality constraints
 
         constraints.append(
-            self.X.A @ self.Delta_x_var[:, :-1]
-            <= self.X.b.reshape(-1, 1) - (self.X.A @ self.xs).reshape(-1, 1) #- self.X.A @ self.x_target.reshape(-1, 1)
+            self.X.A @ self.DDelta_x_var[:, :-1]
+            <= self.X.b.reshape(-1, 1) - (self.X.A @ self.xs).reshape(-1, 1) - (self.X.A @ self.Delta_x_target).reshape(-1, 1)
         )
 
         constraints.append(
             self.U.A @ self.Delta_u_var
-            <= self.U.b.reshape(-1, 1) - (self.U.A @ self.us).reshape(-1, 1) #- self.U.A @ self.u_target.reshape(-1, 1)
+            <= self.U.b.reshape(-1, 1) - (self.U.A @ self.us).reshape(-1, 1) - (self.U.A @ self.Delta_u_target).reshape(-1, 1)
         )
 
         # Terminal constraint
-        U_Delta = Polyhedron.from_bounds(
-            self.LBU - self.us, # - self.u_target, 
-            self.UBU - self.us, # - self.u_target
-            )
-        X_Delta = Polyhedron.from_bounds(
-            self.LBX - self.xs, # - self.x_target,
-            self.UBX - self.xs # - self.x_target
-            )
+        X_DDelta = Polyhedron.from_Hrep(self.X.A, self.X.b - self.X.A @ (self.xs + self.Delta_x_target))
+        U_DDelta = Polyhedron.from_Hrep(self.U.A, self.U.b - self.U.A @ (self.us + self.Delta_u_target))
         A_cl = self.A + self.B @ K
-        KU_Delta = Polyhedron.from_Hrep(U_Delta.A @ K, U_Delta.b)
-        X_int_KU = X_Delta.intersect(KU_Delta)
+        KU_DDelta = Polyhedron.from_Hrep(U_DDelta.A @ K, U_DDelta.b)
+        X_int_KU = X_DDelta.intersect(KU_DDelta)
 
         i = 0
         max_iter = 50
@@ -164,7 +158,7 @@ class MPCControl_base:
 
         self.X_f = Omega
 
-        constraints.append(self.X_f.A @ self.Delta_x_var[:, -1] <= self.X_f.b.reshape(-1, 1))
+        constraints.append(self.X_f.A @ self.DDelta_x_var[:, -1] <= self.X_f.b.reshape(-1, 1))
 
         self.ocp = cp.Problem(cp.Minimize(cost), constraints)
 
@@ -184,14 +178,14 @@ class MPCControl_base:
         #################################################
         # YOUR CODE HERE
 
-        # if x_target is None:
-        #     x_target = np.zeros(self.nx)
-        # if u_target is None:
-        #     u_target = np.zeros(self.nu)
-        # self.x_target.value = x_target
-        # self.u_target.value = u_target
+        if x_target is None:
+            x_target = np.zeros(self.nx)
+        if u_target is None:
+            u_target = np.zeros(self.nu)
+        self.Delta_x_target.value = x_target
+        self.Delta_u_target.value = u_target
         
-        self.Delta_x0.value = x0 - self.xs # - x_target
+        self.DDelta_x0.value = x0 - self.xs - (x_target - self.xs)
 
         self.ocp.solve(
             solver=cp.PIQP,
@@ -200,12 +194,13 @@ class MPCControl_base:
             eps_abs=1e-4,
             eps_rel=1e-4
         )
+
         if self.ocp.status not in ["optimal", "optimal_inaccurate"]:
             raise RuntimeError(f"MPC QP infeasible or failed, status={self.ocp.status}")
 
-        u0 = self.Delta_u_var.value[:, 0] + self.us # + u_target
-        x_traj = self.Delta_x_var.value + self.xs.reshape(-1, 1) # + x_target
-        u_traj = self.Delta_u_var.value + self.us.reshape(-1, 1) # + u_target
+        u0 = self.DDelta_u_var.value[:, 0] + self.us + self.Delta_u_target
+        x_traj = self.DDelta_x_var.value + self.xs.reshape(-1, 1)  + self.DDelta_x_var.reshape(-1, 1)
+        u_traj = self.DDelta_u_var.value + self.us.reshape(-1, 1) + self.DDelta_u_var.reshape(-1, 1)
 
         # plotting the terminal sets
         if show_Xf == True:
