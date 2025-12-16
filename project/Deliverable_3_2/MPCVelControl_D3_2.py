@@ -63,36 +63,51 @@ class MPCVelControl:
 
         if u_target is None:
             u_target = self.us
+        
+        # Extract scalar references from full state target
+        vx_ref    = x_target[6]
+        vy_ref    = x_target[7]
+        vz_ref    = x_target[8]
+        gamma_ref = x_target[5]
 
-        u0[self.mpc_x.u_ids], x_traj[self.mpc_x.x_ids], u_traj[self.mpc_x.u_ids] = (
-            self.mpc_x.get_u(
-                x0[self.mpc_x.x_ids],
-                x_target[self.mpc_x.x_ids],
-                u_target[self.mpc_x.u_ids],
-            )
+        # ---- X velocity ----
+        (
+            u0[self.mpc_x.u_ids],
+            x_traj[self.mpc_x.x_ids],
+            u_traj[self.mpc_x.u_ids],
+        ) = self.mpc_x.get_u(
+            x0[self.mpc_x.x_ids],
+            x_target=vx_ref,
         )
-        u0[self.mpc_y.u_ids], x_traj[self.mpc_y.x_ids], u_traj[self.mpc_y.u_ids] = (
-            self.mpc_y.get_u(
-                x0[self.mpc_y.x_ids],
-                x_target[self.mpc_y.x_ids],
-                u_target[self.mpc_y.u_ids],
-            )
+
+        # ---- Y velocity ----
+        (
+            u0[self.mpc_y.u_ids],
+            x_traj[self.mpc_y.x_ids],
+            u_traj[self.mpc_y.u_ids],
+        ) = self.mpc_y.get_u(
+            x0[self.mpc_y.x_ids],
+            x_target=vy_ref,
         )
-        u0[self.mpc_z.u_ids], x_traj[self.mpc_z.x_ids], u_traj[self.mpc_z.u_ids] = (
-            self.mpc_z.get_u(
-                x0[self.mpc_z.x_ids],
-                x_target[self.mpc_z.x_ids],
-                u_target[self.mpc_z.u_ids],
-            )
+
+        # ---- Z velocity ----
+        (
+            u0[self.mpc_z.u_ids],
+            x_traj[self.mpc_z.x_ids],
+            u_traj[self.mpc_z.u_ids],
+        ) = self.mpc_z.get_u(
+            x0[self.mpc_z.x_ids],
+            x_target=vz_ref,
         )
+
+        # ---- Roll ----
         (
             u0[self.mpc_roll.u_ids],
             x_traj[self.mpc_roll.x_ids],
             u_traj[self.mpc_roll.u_ids],
         ) = self.mpc_roll.get_u(
             x0[self.mpc_roll.x_ids],
-            x_target[self.mpc_roll.x_ids],
-            u_target[self.mpc_roll.u_ids],
+            x_target=gamma_ref,
         )
 
         return u0, x_traj, u_traj, t_traj

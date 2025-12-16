@@ -130,14 +130,13 @@ class MPCControl_base:
         self.max_F_rows = 250
         self.Ff_param = cp.Parameter((self.max_F_rows, self.nx))
         self.ff_param = cp.Parameter(self.max_F_rows)
-        self.nF_param = cp.Parameter(nonneg=True, integer=True)
 
-        # Safe default: no active terminal inequalities until first update
+        # Safe default: "inactive" constraints (0 * x <= big_number)
         self.Ff_param.value = np.zeros((self.max_F_rows, self.nx))
-        self.ff_param.value = np.zeros(self.max_F_rows)
-        self.nF_param.value = 0
+        self.ff_param.value = 1e6 * np.ones(self.max_F_rows)
 
-        cons += [self.Ff_param[:self.nF_param, :] @ dx[:, self.N] <= self.ff_param[:self.nF_param]]
+        # Enforce ALL rows; unused rows are made inactive via padding
+        cons += [self.Ff_param @ dx[:, self.N] <= self.ff_param]
 
         # Store variables
         self.dx = dx
@@ -193,20 +192,23 @@ class MPCControl_base:
                 raise RuntimeError(f"Xf too large: {nF} rows > {self.max_F_rows}")
 
             Fpad = np.zeros((self.max_F_rows, self.nx))
-            fpad = np.zeros(self.max_F_rows)
+            fpad = 1e6 * np.ones(self.max_F_rows)   # inactive rows: 0*x <= 1e6
+
             Fpad[:nF, :] = Ff
             fpad[:nF] = ff
 
             self.Ff_param.value = Fpad
             self.ff_param.value = fpad
-            self.nF_param.value = nF
 
             self._last_xref = x_ref.copy()
             self._last_uref = u_ref.copy()
 
         # Solve
-        self.ocp.solve(solver=cp.OSQP, warm_start=True,
-                    max_iter=20000, eps_abs=1e-4, eps_rel=1e-4)
+        self.ocp.solve(solver=cp.OSQP,
+                    warm_start=True,
+                    max_iter=200000, 
+                    eps_abs=1e-4, 
+                    eps_rel=1e-4)
 
         if self.ocp.status not in ["optimal", "optimal_inaccurate"]:
             raise RuntimeError(f"MPC failed: {self.ocp.status}")
@@ -222,13 +224,64 @@ class MPCControl_base:
         # YOUR CODE HERE
         #################################################
 
+    # subclasses must define which reduced state is tracked
+    tracked_idx: int
+
     def steady_state_from_ref(self, ref):
         """
-        Subclasses must implement:
-        - ref is scalar: vx_ref, vy_ref, vz_ref, or gamma_ref [rad]
-        - return x_ref (reduced), u_ref (reduced)
+        Exercise-style steady state:
+            min ||u_ref||^2
+            s.t. x_ref = A x_ref + B u_ref
+                x_ref[tracked_idx] = ref
+                x_min <= x_ref <= x_max     (finite bounds only)
+                u_min <= u_ref <= u_max
+        Returns reduced (x_ref, u_ref).
         """
-        raise NotImplementedError
+        ref = float(ref)
+
+        x = cp.Variable(self.nx)
+        u = cp.Variable(self.nu)
+
+        # bounds for THIS reduced subsystem
+        u_min = self.LBU[self.u_ids]
+        u_max = self.UBU[self.u_ids]
+
+        x_min_abs = self.LBX[self.x_ids]
+        x_max_abs = self.UBX[self.x_ids]
+
+        cons = []
+
+        # input bounds
+        cons += [u_min <= u, u <= u_max]
+
+        # steady-state dynamics
+        cons += [x == self.A @ x + self.B @ u]
+
+        # enforce the scalar reference on the tracked component
+        cons += [x[self.tracked_idx] == ref]
+
+        # state bounds: only enforce where finite (avoid inf constraints)
+        for i in range(self.nx):
+            if np.isfinite(x_min_abs[i]):
+                cons += [x[i] >= x_min_abs[i]]
+            if np.isfinite(x_max_abs[i]):
+                cons += [x[i] <= x_max_abs[i]]
+
+        # objective: keep input effort small (like your exercise)
+        obj = cp.Minimize(cp.sum_squares(u))
+
+        prob = cp.Problem(obj, cons)
+        prob.solve(solver=cp.OSQP, warm_start=True, max_iter=200000)
+
+        if prob.status not in ["optimal", "optimal_inaccurate"]:
+            raise RuntimeError(f"steady_state_from_ref failed: {prob.status}")
+
+        x_ref = np.array(x.value).reshape(-1,)
+        u_ref = np.array(u.value).reshape(-1,)
+
+        return x_ref, u_ref
+
+
 
     def _build_terminal_set_for_ref(self, x_ref, u_ref):
         """
@@ -255,8 +308,12 @@ class MPCControl_base:
                 e = np.zeros(self.nx); e[i] = -1.0
                 Hx_list.append(e); hx_list.append(-dx_min[i])
 
-        Hx = np.vstack(Hx_list)
-        hx = np.array(hx_list)
+        if len(Hx_list) == 0:
+            Hx = np.zeros((0, self.nx))
+            hx = np.zeros((0,))
+        else:
+            Hx = np.vstack(Hx_list)
+            hx = np.array(hx_list)
 
         Hu = np.vstack([np.eye(self.nu), -np.eye(self.nu)])
         hu = np.hstack([du_max, -du_min])
