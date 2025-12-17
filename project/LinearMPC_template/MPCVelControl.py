@@ -104,14 +104,6 @@ class MPCVelControl:
         )
 
         return u0, x_traj, u_traj, t_traj
-    
-    def trim_velocity(self, x_ref: np.ndarray, rocket: Rocket):
-        """
-        x_ref = [omega_x, omega_y, omega_z, alpha, beta, gamma, v_x, v_y, v_z]
-    
-        returns u_target (4,)
-        """
-        
 
 
     def plot_trajectories(
