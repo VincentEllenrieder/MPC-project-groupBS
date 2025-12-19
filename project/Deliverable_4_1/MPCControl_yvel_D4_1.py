@@ -29,7 +29,7 @@ class MPCControl_yvel_tuned_final(MPCControl_yvel):
     x_ids: np.ndarray = np.array([0, 3, 7]) #wx, alpha, vy
     u_ids: np.ndarray = np.array([0])  # d1
 
-    rho_slack = 1e6
+    rho_slack = 1e7
 
     alpha_max = np.deg2rad(10)
     d1_max   = np.deg2rad(15)
