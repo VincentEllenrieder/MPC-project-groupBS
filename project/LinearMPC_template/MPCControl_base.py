@@ -132,10 +132,13 @@ class MPCControl_base:
         constraints.append(self.U.A @ self.u_var <= self.U.b.reshape(-1, 1)) # u in U for all k = 0, ..., N-1
 
         # Terminal constraint
+        X_delta = Polyhedron.from_bounds(self.LBX - self.xs, self.UBX - self.xs)
+        U_delta = Polyhedron.from_bounds(self.LBU - self.us, self.UBU - self.us)
+
         A_cl = self.A + self.B @ K
 
-        KU = Polyhedron.from_Hrep(self.U.A @ K, self.U.b)
-        Omega = self.X.intersect(KU)
+        KU_delta = Polyhedron.from_Hrep(U_delta.A @ K, U_delta.b)
+        Omega = X_delta.intersect(KU_delta)
         
         i = 0
         max_iter = 50
@@ -160,7 +163,8 @@ class MPCControl_base:
                 f"[{self.subsys_name}] Terminal set is EMPTY around current target; QP will be infeasible."
             )
         
-        constraints.append(self.X_f.A @ x_diff[:, -1] <= self.X_f.b)
+        constraints.append(self.X_f.A @ x_diff[:, -1] <= self.X_f.b) # x_N - x_t in Xf
+        constraints.append(self.U.A @ (self.ut_par + K @ x_diff[:, -1]) <= self.U.b) # u_N = u_t + K (x_N - x_t) in U
 
         self.ocp = cp.Problem(cp.Minimize(cost), constraints)
 
