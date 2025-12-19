@@ -1,6 +1,6 @@
 import numpy as np
 
-from .MPCControl_base import MPCControl_base
+from MPCControl_base_D3_1 import MPCControl_base
 
 
 class MPCControl_roll(MPCControl_base):

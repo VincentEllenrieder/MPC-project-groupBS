@@ -1,13 +1,14 @@
 import numpy as np
 
-from .MPCControl_base import MPCControl_base
+from MPCControl_base_D3_2 import MPCControl_base
 
 
 class MPCControl_xvel(MPCControl_base):
     x_ids: np.ndarray = np.array([1, 4, 6])     #wx ,beta,vx
     u_ids: np.ndarray = np.array([1])   # d2
+    tracked_idx = 2   # v_x
 
-class MPCControl_xvel_tuned_default(MPCControl_base):
+class MPCControl_xvel_tuned_default(MPCControl_xvel):
     x_ids = np.array([1, 4, 6])
     u_ids = np.array([1])
 
@@ -24,7 +25,7 @@ class MPCControl_xvel_tuned_default(MPCControl_base):
 
     R = np.array([[1/(d2_max**2)]])
 
-class MPCControl_xvel_tuned_final(MPCControl_base):
+class MPCControl_xvel_tuned_final(MPCControl_xvel):
     x_ids = np.array([1, 4, 6])
     u_ids = np.array([1])
 

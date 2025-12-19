@@ -2,23 +2,13 @@ import numpy as np
 
 from src.rocket import Rocket
 
-from .MPCControl_roll import MPCControl_roll
-from .MPCControl_xvel import MPCControl_xvel
-from .MPCControl_yvel import MPCControl_yvel
-from .MPCControl_zvel import MPCControl_zvel
-
-from LinearMPC_template.MPCControl_xvel import MPCControl_xvel_tuned_final
-from LinearMPC_template.MPCControl_yvel import MPCControl_yvel_tuned_final
-from LinearMPC_template.MPCControl_zvel import MPCControl_zvel_tuned_final
-from LinearMPC_template.MPCControl_roll import MPCControl_roll_tuned_final
+from MPCControl_xvel_D3_1 import MPCControl_xvel_tuned_final
+from MPCControl_yvel_D3_1 import MPCControl_yvel_tuned_final
+from MPCControl_zvel_D3_1 import MPCControl_zvel_tuned_final
+from MPCControl_roll_D3_1 import MPCControl_roll_tuned_final
 
 
 class MPCVelControl:
-    # mpc_x: MPCControl_xvel
-    # mpc_y: MPCControl_yvel
-    # mpc_z: MPCControl_zvel
-    # mpc_roll: MPCControl_roll
-
     mpc_x: MPCControl_xvel_tuned_final
     mpc_y: MPCControl_yvel_tuned_final
     mpc_z: MPCControl_zvel_tuned_final
@@ -31,11 +21,6 @@ class MPCVelControl:
         self.xs, self.us = rocket.trim()
         A, B = rocket.linearize(self.xs, self.us)
 
-        # self.mpc_x = MPCControl_xvel(A, B, self.xs, self.us, Ts, H)
-        # self.mpc_y = MPCControl_yvel(A, B, self.xs, self.us, Ts, H)
-        # self.mpc_z = MPCControl_zvel(A, B, self.xs, self.us, Ts, H)
-        # self.mpc_roll = MPCControl_roll(A, B, self.xs, self.us, Ts, H)
-
         self.mpc_x = MPCControl_xvel_tuned_final(A, B, self.xs, self.us, Ts, H)
         self.mpc_y = MPCControl_yvel_tuned_final(A, B, self.xs, self.us, Ts, H)
         self.mpc_z = MPCControl_zvel_tuned_final(A, B, self.xs, self.us, Ts, H)
@@ -45,10 +30,7 @@ class MPCVelControl:
 
     def load_controllers(
         self,
-        # mpc_x: MPCControl_xvel,
-        # mpc_y: MPCControl_yvel,
-        # mpc_z: MPCControl_zvel,
-        # mpc_roll: MPCControl_roll,
+
         mpc_x: MPCControl_xvel_tuned_final,
         mpc_y: MPCControl_yvel_tuned_final,
         mpc_z: MPCControl_zvel_tuned_final,
