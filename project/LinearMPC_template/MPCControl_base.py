@@ -92,11 +92,14 @@ class MPCControl_base:
 
         self.red_state_names = [FULL_STATE_NAMES[i] for i in self.x_ids]
 
+        # Cache for terminal set to avoid computing it if target same as for previous call of get_u
+        self._cached_xt = None
+        self._cached_ut = None
+        self._cached_Xf = None
+
         self._setup_controller() # this method is called at initialization of the controller -> the optimization problem and its variables are all acessible
 
     def _setup_controller(self) -> None:
-        #################################################
-        # YOUR CODE HERE
 
         self.x_var = cp.Variable((self.nx, self.N + 1), name='x')
         self.u_var = cp.Variable((self.nu, self.N), name='u')
@@ -108,71 +111,25 @@ class MPCControl_base:
         u_diff = self.u_var - cp.reshape(self.ut_par, (self.nu, 1))
 
         # Costs (objective function)
-        cost = 0
+        self.cost = 0
         for k in range(self.N):
-            cost += cp.quad_form(x_diff[:,k], self.Q)
-            cost += cp.quad_form(u_diff[:,k], self.R)
+            self.cost += cp.quad_form(x_diff[:,k], self.Q)
+            self.cost += cp.quad_form(u_diff[:,k], self.R)
         
         # Terminal cost
         K, P, _ = dlqr(self.A, self.B, self.Q, self.R)
-        K = -K
-        cost += cp.quad_form(x_diff[:, -1], P)        
+        self.K = -K
+        self.cost += cp.quad_form(x_diff[:, -1], P)        
 
         # System (equality) constraint
-        constraints = []
-        constraints.append(self.x_var[:, 0] == self.x0_par)
-        constraints.append(self.A @ x_diff[:, :-1] + self.B @ u_diff == x_diff[:, 1:]) # x^+ - xt = A(x-xt) + B(u-ut)
+        self.base_constraints = []
+        self.base_constraints.append(self.x_var[:, 0] == self.x0_par)
+        self.base_constraints.append(self.A @ x_diff[:, :-1] + self.B @ u_diff == x_diff[:, 1:]) # x^+ - xt = A(x-xt) + B(u-ut)
 
         # Inequality constraints
-        constraints.append(self.X.A @ self.x_var <= self.X.b.reshape(-1, 1)) # x in X for all k = 0, ..., N
+        self.base_constraints.append(self.X.A @ self.x_var <= self.X.b.reshape(-1, 1)) # x in X for all k = 0, ..., N
 
-        constraints.append(self.U.A @ self.u_var <= self.U.b.reshape(-1, 1)) # u in U for all k = 0, ..., N-1
-
-        # Terminal constraints
-        U_Delta = Polyhedron.from_bounds(self.LBU - self.us, self.UBU - self.us)
-        X_Delta = Polyhedron.from_bounds(self.LBX - self.xs, self.UBX - self.xs)
-
-        K, P, _ = dlqr(self.A, self.B, self.Q, self.R)
-        K = -K
-        A_cl = self.A + self.B @ K
-
-        KU_Delta = Polyhedron.from_Hrep(U_Delta.A @ K, U_Delta.b)  # KU_Delta = {x - xs : K * (x - xs) in U_Delta}
-        X_int_KU = X_Delta.intersect(KU_Delta)
-
-        i = 0
-        max_iter = 50
-        Omega = X_int_KU
-        while i < max_iter :
-            H, h = Omega.A, Omega.b
-            pre_omega = Polyhedron.from_Hrep(H @ A_cl, h)
-            Omega_new = pre_omega.intersect(Omega)
-            Omega_new.minHrep(True)
-            _ = Omega_new.Vrep # TODO: this is a tempary fix since the contains() method is not robust enough when both inner and outer polyhera only has H-rep (from solution of ex 4)
-            if Omega == Omega_new :
-                Omega = Omega_new
-                print("Maximum invariant set found after {0} iterations !\n" .format(i+1))
-                break
-            print("Not yet convgerged at iteration {0}" .format(i+1))
-            Omega = Omega_new
-            i += 1
-
-        self.X_f = Omega
-
-        constraints.append(self.X_f.A @ x_diff[:, -1] <= self.X_f.b.reshape(-1, 1)) #x_N - xt in X_f and x_N in X
-
-        # If tracking problem done in "true" values (not delta formulation), then need to add the following constraint (previously in X_f when tracking not present).
-        # Could remove this constraint (that corresponds to u-us = K(x - xs) in U) if X_f was recomputed with the trackpoints, but this is not handy as we would
-        # need to know the value of x_target by passing it as an attribute to the class (here just a CVXPY parameter, not an attribute, that is still unitialized at the moment 
-        # of _setup_controller() call, and x_target not yet know. To change this, it would need quite some rewriting of MPCVelControl and the way mpc object is initialized).
-        # So, to keep the usage of the CVXPY parameter, we need to use all sets X, U and X_f as the ones computed during regulation, but this means that fot the final
-        # constraint, we need to add this last constraint as X_f was computed when tracking was not present. See goodnotes for more details.
-
-        constraints.append(self.U.A @ (self.ut_par + K @ x_diff[:, -1]) <= self.U.b.reshape(-1, 1)) # u_N = ut + K(x_N - xt) in U
-
-        self.ocp = cp.Problem(cp.Minimize(cost), constraints)
-
-        # YOUR CODE HERE
-        #################################################
+        self.base_constraints.append(self.U.A @ self.u_var <= self.U.b.reshape(-1, 1)) # u in U for all k = 0, ..., N-1
 
     @staticmethod
     def _discretize(A: np.ndarray, B: np.ndarray, Ts: float):
@@ -184,25 +141,54 @@ class MPCControl_base:
 
     def get_u(
         self, x0: np.ndarray, show_Xf: bool, x_target: np.ndarray = None, u_target: np.ndarray = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        #################################################
-        # YOUR CODE HERE
         
+        # Initialize QP parameters
         self.x0_par.value = x0
-
         if x_target is None:
-            self.xt_par.value = x_target
-        else:
             self.xt_par.value = self.xs
-
+        else:
+            self.xt_par.value = x_target
         if u_target is None:
             self.ut_par.value = self.us
         else:
             self.ut_par.value = u_target
 
-        if show_Xf == True :
-            self.plot_Xf(x_target)
+        # Build terminal set + terminal constraints USING (x_t, u_t) IF targets have changed sice last call of get_u:
+        
+        # If the invariant set has never been constructef yet, compute it
+        if self._cached_xt is None or self._cached_ut is None or self._cached_Xf is None:
+            self.X_f = self.compute_terminal_set_about_target(self.xt_par.value, self.ut_par.value, max_iter=50)
+        else:
+            # If x_target and u_target same as previous one, don't compute the invariant set again
+            if np.allclose(self.xt_par.value, self._cached_xt, rtol=1e-10, atol=1e-10) and np.allclose(self.ut_par.value, self._cached_ut, rtol=1e-10, atol=1e-10):
+                self.X_f = self._cached_Xf
+            # If x_target or u_target changed with respect to their value the last time u_get was called, compute the invariant set again
+            else:
+                self.X_f = self.compute_terminal_set_about_target(self.xt_par.value, self.ut_par.value, max_iter=50)
 
-        self.ocp.solve(
+        # If empty terminal set -> infeasible
+        if self.X_f.Vrep.V.size == 0:
+            raise RuntimeError(
+                f"[{self.subsys_name}] Terminal set is EMPTY around current target; QP will be infeasible."
+            )
+        
+        self._cached_xt = self.xt_par.value.copy()
+        self._cached_ut = self.ut_par.value.copy()
+        self._cached_Xf = self.X_f
+
+        x_diff_N = self.x_var[:, -1] - self.xt_par  # (nx,)
+
+        terminal_constraints = []
+        terminal_constraints.append(self.X_f.A @ x_diff_N <= self.X_f.b) 
+        terminal_constraints.append(self.U.A @ (self.ut_par + self.K @ x_diff_N) <= self.U.b)
+
+        if show_Xf == True :
+            self.plot_Xf(self.xt_par.value)
+
+        # Build and solve FINAL OCP (base + terminal)
+        ocp = cp.Problem(cp.Minimize(self.cost), self.base_constraints + terminal_constraints)
+
+        ocp.solve(
             solver=cp.PIQP,
             warm_start=True,
             max_iter=20000,
@@ -210,18 +196,59 @@ class MPCControl_base:
             eps_rel=1e-4
         )
 
-        if self.ocp.status not in ("optimal", "optimal_inaccurate"):
-            raise RuntimeError(f"QP problem failed: {self.ocp.status}")
+        if ocp.status not in ("optimal", "optimal_inaccurate"):
+            raise RuntimeError(f"QP problem failed: {ocp.status}")
 
         u0 = self.u_var.value[:, 0]
         x_traj = self.x_var.value
         u_traj = self.u_var.value
-        print(f"u0 for system {self.subsys_name} is {u0}\n")
-        print(f"x_ol for system {self.subsys_name} is {x_traj}\n")
-        print(f"u_ol for system {self.subsys_name} is {u_traj}\n")
+        # print(f"u0 for system {self.subsys_name} is {u0}\n")
+        # print(f"x_ol for system {self.subsys_name} is {x_traj}\n")
+        # print(f"u_ol for system {self.subsys_name} is {u_traj}\n")
 
         return u0, x_traj, u_traj
-            
+
+    def compute_terminal_set_about_target(
+        self,
+        xt: np.ndarray,
+        ut: np.ndarray,
+        max_iter: int = 50,
+    ) -> Polyhedron:
+        """
+        Compute maximal invariant set for delta dynamics:
+            x+ - xt = (A + B K) (x - xt)
+        subject to:
+            x - xt in X_delta = {x - xt : x in X}
+            K (x - xt) in U_delta = {u - ut : u in U}
+        """
+        # Build delta-sets wrt CURRENT reference (x_t, u_t)
+        # X_delta = {x-xt | x in X} -> bounds shift
+        X_delta = Polyhedron.from_bounds(self.LBX - xt, self.UBX - xt)
+        U_delta = Polyhedron.from_bounds(self.LBU - ut, self.UBU - ut)
+
+        A_cl = self.A + self.B @ self.K
+
+        KU_delta = Polyhedron.from_Hrep(U_delta.A @ self.K, U_delta.b)
+        Omega = X_delta.intersect(KU_delta)
+
+        i = 0
+        max_iter = 50
+        while i < max_iter :
+            H, h = Omega.A, Omega.b
+            pre_omega = Polyhedron.from_Hrep(H @ A_cl, h)
+            Omega_new = pre_omega.intersect(Omega)
+            Omega_new.minHrep(True)
+            _ = Omega_new.Vrep 
+            if Omega == Omega_new :
+                Omega = Omega_new
+                print("Maximum invariant set found after {0} iterations !\n" .format(i+1))
+                break
+            print("Not yet convgerged at iteration {0}" .format(i+1))
+            Omega = Omega_new
+            i += 1
+
+        return Omega
+
 
     def plot_Xf(self, x_target):
         pairs = list(combinations(range(self.nx), 2))
@@ -267,7 +294,4 @@ class MPCControl_base:
                 plt.legend()
                 plt.show()
 
-            
-        # YOUR CODE HERE
-        #################################################
 

@@ -50,7 +50,7 @@ class MPCVelControl:
         self,
         t0: float, # initial timestamp 
         x0: np.ndarray,
-        show_Xf: bool = True,
+        show_Xf: bool = False,
         x_target: np.ndarray = None, 
         u_target: np.ndarray = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -104,7 +104,6 @@ class MPCVelControl:
         )
 
         return u0, x_traj, u_traj, t_traj
-
 
     def plot_trajectories(
         self,
