@@ -189,8 +189,8 @@ class MPCControl_base:
         constraints += [dx[:, 0] == self.dx0_param]
         
         # Terminal constraint x_N ∈ X_f
-        # Ff, ff = self.Xf.A, self.Xf.b
-        # constraints += [Ff @ (dx[:, self.N] - self.xref_param) <= ff]
+        Ff, ff = self.Xf.A, self.Xf.b
+        constraints += [Ff @ (dx[:, self.N] - self.xref_param) <= ff]
         self.ocp = cp.Problem(cp.Minimize(cost), constraints)
 
 

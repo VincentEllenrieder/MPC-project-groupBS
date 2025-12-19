@@ -58,12 +58,17 @@ class MPCVelControl:
         x_traj = np.zeros((12, self.mpc_x.N + 1))
         u_traj = np.zeros((4, self.mpc_x.N))
 
-        if x_target is None:
+        if x_target is None: # if no tracking target given, do regulation (stabilize at the origin, as x_s = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
             x_target = self.xs
 
-        if u_target is None:
+        if u_target is None: # if no tracking given, the final control input in the closed-loop trajectory should be u_s = 0, 0, 66.66666667, 0
             u_target = self.us
 
+        # these next 4 blocks of code use the methods get_u incorporated in each subsystem x, y, z and roll for finding :
+        # 1. the first optimal control input (u0) for this subsystem among the complete control input vector of size n_u_subsys.
+        # 2. the total open-loop trajectory of length N+1 (from 0 to N) of the states related to this subsystem among the complete set of states of size n_x_subsys x N+1.
+        # 3. the total open-loop trajectory of length N (from 1 to N) of the the optimal control inputs related to this subsystem among the complete control input vector of size n_u_subsys x N+1
+        # All these are compiled in the complete arrays of size | u0: 4 x 1 | x_traj: 12 x N+1 | u_traj: 4 x N
         u0[self.mpc_x.u_ids], x_traj[self.mpc_x.x_ids], u_traj[self.mpc_x.u_ids] = (
             self.mpc_x.get_u(
                 x0[self.mpc_x.x_ids],
