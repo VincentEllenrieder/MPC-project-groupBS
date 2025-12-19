@@ -63,14 +63,14 @@ class MPCControl_base:
         # Bounds definition
         UBU = np.array([np.deg2rad(15), np.deg2rad(15), 80, 20])
         LBU = np.array([-np.deg2rad(15), -np.deg2rad(15), 40.0, -20.0])
-        UBX = np.array([50,  50,  50,
-                        np.deg2rad(10),  np.deg2rad(10),  50,
-                        50,  50,  50,
-                        50,  50, 50])
-        LBX = np.array([-50, -50, -50,
-                        -np.deg2rad(10), -np.deg2rad(10), -50,
-                        -50, -50, -50,
-                        -50, -50, 0.0])
+        UBX = np.array([np.inf,  np.inf,  np.inf,
+                        np.deg2rad(10),  np.deg2rad(10),  np.inf,
+                        np.inf,  np.inf,  np.inf,
+                        np.inf,  np.inf, np.inf])
+        LBX = np.array([-np.inf, -np.inf, -np.inf,
+                        -np.deg2rad(10), -np.deg2rad(10), -np.inf,
+                        -np.inf, -np.inf, -np.inf,
+                        -np.inf, -np.inf, 0.0])
         self.UBU = UBU[self.u_ids]
         self.LBU = LBU[self.u_ids]
         self.UBX = UBX[self.x_ids]
@@ -134,8 +134,8 @@ class MPCControl_base:
         K = -K
         A_cl = self.A + self.B @ K
 
-        KU = Polyhedron.from_Hrep(U_delta.A @ K, U_delta.b)
-        X_int_KU = X_delta.intersect(KU)
+        KU_delta = Polyhedron.from_Hrep(U_delta.A @ K, U_delta.b)
+        X_int_KU = X_delta.intersect(KU_delta)
 
         i = 0
         max_iter = 50
@@ -156,7 +156,7 @@ class MPCControl_base:
 
         self.X_f = Omega
 
-        constraints.append(self.X_f.A @ x_dev[:, -1] <= self.X_f.b.reshape(-1, 1)) #x - xs in X_f
+        constraints.append(self.X_f.A @ x_dev[:, -1] <= self.X_f.b.reshape(-1, 1)) # x_N - xs in X_f
 
         self.ocp = cp.Problem(cp.Minimize(cost), constraints)
 
