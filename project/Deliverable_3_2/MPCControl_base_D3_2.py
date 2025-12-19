@@ -96,7 +96,7 @@ class MPCControl_base:
         self.dx = cp.Variable((self.nx, self.N + 1))
         self.du = cp.Variable((self.nu, self.N))
 
-        dx = self.dx
+        dx = self.dx #dx = x - x_ref
         du = self.du
 
         # Cost
