@@ -50,7 +50,7 @@ class MPCVelControl:
         self,
         t0: float, # initial timestamp 
         x0: np.ndarray,
-        show_Xf: bool = False,
+        show_Xf: bool = True,
         x_target: np.ndarray = None, 
         u_target: np.ndarray = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:

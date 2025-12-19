@@ -101,41 +101,43 @@ class MPCControl_base:
         self.x_var = cp.Variable((self.nx, self.N + 1), name='x')
         self.u_var = cp.Variable((self.nu, self.N), name='u')
         self.x0_par = cp.Parameter((self.nx,), name='x0')
+        self.xt_par = cp.Parameter((self.nx,), name='xtarget')
+        self.ut_par = cp.Parameter((self.nu,), name= 'utarget')
         
-        x_dev = self.x_var - self.xs.reshape(-1, 1)
-        u_dev = self.u_var - self.us.reshape(-1, 1)
+        x_diff = self.x_var - cp.reshape(self.xt_par, (self.nx, 1))
+        u_diff = self.u_var - cp.reshape(self.ut_par, (self.nu, 1))
 
         # Costs (objective function)
         cost = 0
         for k in range(self.N):
-            cost += cp.quad_form(x_dev[:,k], self.Q)
-            cost += cp.quad_form(u_dev[:,k], self.R)
+            cost += cp.quad_form(x_diff[:,k], self.Q)
+            cost += cp.quad_form(u_diff[:,k], self.R)
         
         # Terminal cost
         K, P, _ = dlqr(self.A, self.B, self.Q, self.R)
         K = -K
-        cost += cp.quad_form(x_dev[:, -1], P)        
+        cost += cp.quad_form(x_diff[:, -1], P)        
 
         # System (equality) constraint
         constraints = []
         constraints.append(self.x_var[:, 0] == self.x0_par)
-        constraints.append(self.A @ x_dev[:, :-1] + self.B @ u_dev == x_dev[:, 1:]) # x^+ - xs = A(x-xs) + B(u-us)
+        constraints.append(self.A @ x_diff[:, :-1] + self.B @ u_diff == x_diff[:, 1:]) # x^+ - xt = A(x-xt) + B(u-ut)
 
         # Inequality constraints
-        constraints.append(self.X.A @ self.x_var[:, :-1] <= self.X.b.reshape(-1, 1)) # x in X
+        constraints.append(self.X.A @ self.x_var <= self.X.b.reshape(-1, 1)) # x in X for all k = 0, ..., N
 
-        constraints.append(self.U.A @ self.u_var <= self.U.b.reshape(-1, 1)) # u in U
+        constraints.append(self.U.A @ self.u_var <= self.U.b.reshape(-1, 1)) # u in U for all k = 0, ..., N-1
 
-        # Terminal constraint
-        X_delta = Polyhedron.from_bounds(self.LBX - self.xs, self.UBX - self.xs)
-        U_delta = Polyhedron.from_bounds(self.LBU - self.us, self.UBU - self.us)
+        # Terminal constraints
+        U_Delta = Polyhedron.from_bounds(self.LBU - self.us, self.UBU - self.us)
+        X_Delta = Polyhedron.from_bounds(self.LBX - self.xs, self.UBX - self.xs)
 
         K, P, _ = dlqr(self.A, self.B, self.Q, self.R)
         K = -K
         A_cl = self.A + self.B @ K
 
-        KU = Polyhedron.from_Hrep(U_delta.A @ K, U_delta.b)
-        X_int_KU = X_delta.intersect(KU)
+        KU_Delta = Polyhedron.from_Hrep(U_Delta.A @ K, U_Delta.b)  # KU_Delta = {x - xs : K * (x - xs) in U_Delta}
+        X_int_KU = X_Delta.intersect(KU_Delta)
 
         i = 0
         max_iter = 50
@@ -156,7 +158,16 @@ class MPCControl_base:
 
         self.X_f = Omega
 
-        constraints.append(self.X_f.A @ x_dev[:, -1] <= self.X_f.b.reshape(-1, 1)) #x - xs in X_f
+        constraints.append(self.X_f.A @ x_diff[:, -1] <= self.X_f.b.reshape(-1, 1)) #x_N - xt in X_f and x_N in X
+
+        # If tracking problem done in "true" values (not delta formulation), then need to add the following constraint (previously in X_f when tracking not present).
+        # Could remove this constraint (that corresponds to u-us = K(x - xs) in U) if X_f was recomputed with the trackpoints, but this is not handy as we would
+        # need to know the value of x_target by passing it as an attribute to the class (here just a CVXPY parameter, not an attribute, that is still unitialized at the moment 
+        # of _setup_controller() call, and x_target not yet know. To change this, it would need quite some rewriting of MPCVelControl and the way mpc object is initialized).
+        # So, to keep the usage of the CVXPY parameter, we need to use all sets X, U and X_f as the ones computed during regulation, but this means that fot the final
+        # constraint, we need to add this last constraint as X_f was computed when tracking was not present. See goodnotes for more details.
+
+        constraints.append(self.U.A @ (self.ut_par + K @ x_diff[:, -1]) <= self.U.b.reshape(-1, 1)) # u_N = ut + K(x_N - xt) in U
 
         self.ocp = cp.Problem(cp.Minimize(cost), constraints)
 
@@ -178,6 +189,19 @@ class MPCControl_base:
         
         self.x0_par.value = x0
 
+        if x_target is None:
+            self.xt_par.value = x_target
+        else:
+            self.xt_par.value = self.xs
+
+        if u_target is None:
+            self.ut_par.value = self.us
+        else:
+            self.ut_par.value = u_target
+
+        if show_Xf == True :
+            self.plot_Xf(x_target)
+
         self.ocp.solve(
             solver=cp.PIQP,
             warm_start=True,
@@ -192,64 +216,58 @@ class MPCControl_base:
         u0 = self.u_var.value[:, 0]
         x_traj = self.x_var.value
         u_traj = self.u_var.value
+        print(f"u0 for system {self.subsys_name} is {u0}\n")
+        print(f"x_ol for system {self.subsys_name} is {x_traj}\n")
+        print(f"u_ol for system {self.subsys_name} is {u_traj}\n")
 
-        # plotting the terminal sets
-        if show_Xf == True:
+        return u0, x_traj, u_traj
             
-            pairs = list(combinations(range(self.nx), 2))
 
-            if len(pairs) == 0:
-                print(f"System {self.subsys_name} is 1st order")
-                A = np.asarray(self.X_f.A).reshape(-1, 1)   # (m,1)
-                b = np.asarray(self.X_f.b).reshape(-1)      # (m,)
+    def plot_Xf(self, x_target):
+        pairs = list(combinations(range(self.nx), 2))
 
-                x = cp.Variable(1)
+        if x_target is not None:
+            Xf_shifted = Polyhedron.from_Hrep(self.X_f.A, self.X_f.b + self.X_f.A @ x_target)
+        else:
+            Xf_shifted = self.X_f
 
-                constraints = [A @ x <= b]
+        if Xf_shifted.Vrep.V.size == 0:
+            print('X_f is empty, skipping plot')
+            return
 
-                # xmin
-                prob_min = cp.Problem(cp.Minimize(x[0]), constraints)
-                prob_min.solve(solver=cp.ECOS)
-                if prob_min.status not in ("optimal", "optimal_inaccurate"):
-                    raise RuntimeError(f"Min problem failed: {prob_min.status}")
-                xmin = float(x.value[0])
+        if len(pairs) == 0:
+            print(f"System {self.subsys_name} is 1st order")
 
-                # xmax
-                prob_max = cp.Problem(cp.Maximize(x[0]), constraints)
-                prob_max.solve(solver=cp.ECOS)
-                if prob_max.status not in ("optimal", "optimal_inaccurate"):
-                    raise RuntimeError(f"Max problem failed: {prob_max.status}")
-                xmax = float(x.value[0])
+            xmin = Xf_shifted.Vrep.V[0, 0]
+            xmax = Xf_shifted.Vrep.V[1, 0]
 
-                plt.figure()
-                plt.hlines(0, xmin + self.xs, xmax + self.xs, color='y', linewidth=6)
-                plt.plot([xmin + self.xs, xmax + self.xs], [0, 0], "o", color='y')
-                plt.yticks([])
-                plt.xlabel(rf"{self.red_state_names[0]}")
-                plt.title(rf"$X_f = [{xmin:.4g},\, {xmax:.4g}]$")
-                plt.grid(True, axis="x")
+            plt.figure()
+            plt.hlines(0, xmin, xmax, color='y', linewidth=6)
+            plt.plot([xmin, xmax], [0, 0], "o", color='y')
+            plt.yticks([])
+            plt.xlabel(self.red_state_names[0])
+            plt.title(rf"$X = [{xmin:.4g},\, {xmax:.4g}]$")
+            plt.grid(True, axis="x")
+            plt.show()
+
+        else:
+            print(f"System {self.subsys_name} is high order (>1)")
+            for (i, j) in pairs:
+                fig, ax = plt.subplots(1, 1)
+
+                # plot feasible set and terminal set in the same projection
+                Xf_shifted.projection(dims=(i, j)).plot(ax, color='y', opacity=0.35, label=r'$\mathcal{X}_f$')
+
+                ax.set_xlabel(self.red_state_names[i])
+                ax.set_ylabel(self.red_state_names[j])
+                ax.set_title(f"Projection: {self.red_state_names[i]} vs {self.red_state_names[j]}")
+                ax.grid(True)
+
+                fig.suptitle(f"Terminal set of subsystem {self.subsys_name} w.r.t. states {self.red_state_names[i]} and {self.red_state_names[j]}")
+                plt.legend()
                 plt.show()
-
-
-            else:
-                print(f"System {self.subsys_name} is high order (>1)")
-                for (i, j) in pairs:
-                    fig, ax = plt.subplots(1, 1)
-
-                    # plot feasible set and terminal set in the same projection
-                    self.X_f.projection(dims=(i, j)).plot(ax, color='y', opacity=0.35, label=r'$\mathcal{X}_f$')
-
-                    ax.set_xlabel(self.red_state_names[i])
-                    ax.set_ylabel(self.red_state_names[j])
-                    ax.set_title(f"Projection: {self.red_state_names[i]} vs {self.red_state_names[j]}")
-                    ax.grid(True)
-
-                    fig.suptitle(f"Terminal set of subsystem {self.subsys_name} w.r.t. states {self.red_state_names[i]} and {self.red_state_names[j]}")
-                    plt.legend()
-                    plt.show()
 
             
         # YOUR CODE HERE
         #################################################
 
-        return u0, x_traj, u_traj
