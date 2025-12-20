@@ -58,126 +58,44 @@ class MPCVelControl:
         x_traj = np.zeros((12, self.mpc_x.N + 1))
         u_traj = np.zeros((4, self.mpc_x.N))
 
-        if x_target is None:
+        if x_target is None: # if no tracking target given, do regulation (stabilize at the origin, as x_s = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
             x_target = self.xs
 
-        if u_target is None:
+        if u_target is None: # if no tracking given, the final control input in the closed-loop trajectory should be u_s = 0, 0, 66.66666667, 0
             u_target = self.us
-        
-        # Extract scalar references from full state target
-        vx_ref    = x_target[6]
-        vy_ref    = x_target[7]
-        vz_ref    = x_target[8]
-        gamma_ref = x_target[5]
 
-        # --- Saturate velocity references to feasible region ---
-        vx_ref = np.clip(vx_ref, -5.0, 5.0)
-        vy_ref = np.clip(vy_ref, -5.0, 5.0)
-        vz_ref = np.clip(vz_ref, -5.0, 5.0)
-
-        gamma_ref = np.clip(gamma_ref,
-                            -np.deg2rad(45),
-                            np.deg2rad(45))
-
-        # ---- X velocity ----
-        # (
-        #     u0[self.mpc_x.u_ids],
-        #     x_traj[self.mpc_x.x_ids],
-        #     u_traj[self.mpc_x.u_ids],
-        # ) = self.mpc_x.get_u(
-        #     x0[self.mpc_x.x_ids],
-        #     x_target=vx_ref,
-        # )
-        try:
-            (
-                u0[self.mpc_x.u_ids],
-                x_traj[self.mpc_x.x_ids],
-                u_traj[self.mpc_x.u_ids],
-            ) = self.mpc_x.get_u(
+        # these next 4 blocks of code use the methods get_u incorporated in each subsystem x, y, z and roll for finding :
+        # 1. the first optimal control input (u0) for this subsystem among the complete control input vector of size n_u_subsys.
+        # 2. the total open-loop trajectory of length N+1 (from 0 to N) of the states related to this subsystem among the complete set of states of size n_x_subsys x N+1.
+        # 3. the total open-loop trajectory of length N (from 1 to N) of the the optimal control inputs related to this subsystem among the complete control input vector of size n_u_subsys x N+1
+        # All these are compiled in the complete arrays of size | u0: 4 x 1 | x_traj: 12 x N+1 | u_traj: 4 x N
+        u0[self.mpc_x.u_ids], x_traj[self.mpc_x.x_ids, :], u_traj[self.mpc_x.u_ids, :] = (
+            self.mpc_x.get_u(
                 x0[self.mpc_x.x_ids],
-                x_target=vx_ref,
+                x_target[self.mpc_x.x_ids],
+                u_target[self.mpc_x.u_ids],
             )
-        except RuntimeError as e:
-            print(f"\n=== FAILED: mpc_x at t={t0:.2f} ===")
-            print("x0_sub:", x0[self.mpc_x.x_ids])
-            print("vx_ref:", vx_ref)
-            raise
-
-
-        # ---- Y velocity ----
-        # (
-        #     u0[self.mpc_y.u_ids],
-        #     x_traj[self.mpc_y.x_ids],
-        #     u_traj[self.mpc_y.u_ids],
-        # ) = self.mpc_y.get_u(
-        #     x0[self.mpc_y.x_ids],
-        #     x_target=vy_ref,
-        # )
-
-        try:
-            (
-                u0[self.mpc_y.u_ids],
-                x_traj[self.mpc_y.x_ids],
-                u_traj[self.mpc_y.u_ids],
-            ) = self.mpc_y.get_u(
+        )
+        u0[self.mpc_y.u_ids], x_traj[self.mpc_y.x_ids, :], u_traj[self.mpc_y.u_ids, :] = (
+            self.mpc_y.get_u(
                 x0[self.mpc_y.x_ids],
-                x_target=vy_ref,
+                x_target[self.mpc_y.x_ids],
+                u_target[self.mpc_y.u_ids],
             )
-        except RuntimeError as e:
-            print(f"\n=== FAILED: mpc_y at t={t0:.2f} ===")
-            print("x0_sub:", x0[self.mpc_y.x_ids])
-            print("vy_ref:", vy_ref)
-            raise
-
-        # ---- Z velocity ----
-        # (
-        #     u0[self.mpc_z.u_ids],
-        #     x_traj[self.mpc_z.x_ids],
-        #     u_traj[self.mpc_z.u_ids],
-        # ) = self.mpc_z.get_u(
-        #     x0[self.mpc_z.x_ids],
-        #     x_target=vz_ref,
-        # )
-
-        try:
-            (
-                u0[self.mpc_z.u_ids],
-                x_traj[self.mpc_z.x_ids],
-                u_traj[self.mpc_z.u_ids],
-            ) = self.mpc_z.get_u(
+        )
+        u0[self.mpc_z.u_ids], x_traj[self.mpc_z.x_ids, :], u_traj[self.mpc_z.u_ids, :] = (
+            self.mpc_z.get_u(
                 x0[self.mpc_z.x_ids],
-                x_target=vz_ref,
+                x_target[self.mpc_z.x_ids],
+                u_target[self.mpc_z.u_ids],
             )
-        except RuntimeError as e:
-            print(f"\n=== FAILED: mpc_z at t={t0:.2f} ===")
-            print("x0_sub:", x0[self.mpc_z.x_ids])
-            print("vz_ref:", vz_ref)
-            raise
-
-        # ---- Roll ----
-        # (
-        #     u0[self.mpc_roll.u_ids],
-        #     x_traj[self.mpc_roll.x_ids],
-        #     u_traj[self.mpc_roll.u_ids],
-        # ) = self.mpc_roll.get_u(
-        #     x0[self.mpc_roll.x_ids],
-        #     x_target=gamma_ref,
-        # )
-
-        # ---- Roll ----
-        try:
-            (
-                u0[self.mpc_roll.u_ids],
-                x_traj[self.mpc_roll.x_ids],
-                u_traj[self.mpc_roll.u_ids],
-            ) = self.mpc_roll.get_u(
+        )
+        u0[self.mpc_roll.u_ids], x_traj[self.mpc_roll.x_ids, :], u_traj[self.mpc_roll.u_ids, :] = ( 
+            self.mpc_roll.get_u(
                 x0[self.mpc_roll.x_ids],
-                x_target=gamma_ref,
+                x_target[self.mpc_roll.x_ids],
+                u_target[self.mpc_roll.u_ids],
             )
-        except RuntimeError as e:
-            print(f"\n=== FAILED: mpc_roll at t={t0:.2f} ===")
-            print("x0_sub:", x0[self.mpc_roll.x_ids])
-            print("gamma_ref:", gamma_ref)
-            raise
+        )
 
         return u0, x_traj, u_traj, t_traj

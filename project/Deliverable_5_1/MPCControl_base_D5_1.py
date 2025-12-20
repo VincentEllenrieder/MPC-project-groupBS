@@ -106,11 +106,30 @@ class MPCControl_base:
         x_diff = self.x_var - cp.reshape(self.xt_par, (self.nx, 1))
         u_diff = self.u_var - cp.reshape(self.ut_par, (self.nu, 1))
 
+        # Add Slack
+        self.eps = cp.Variable((self.nx, self.N), nonneg=True)
+        rho = getattr(self, "rho_slack", 1e4)
+
+        x_min = self.LBX
+        x_max = self.UBX
+
+        #only for the 3-state subsystems (xvel, yvel), soften the second reduced state (index 1).
+        # In your xvel subsystem, x_ids = [1, 4, 6] → reduced state index 1 corresponds to global state 4 = β.
+        # In yvel, x_ids = [0, 3, 7] → reduced index 1 corresponds to global state 3 = α.
+        soft = np.zeros(self.nx)
+        if self.nx == 3:          # xvel / yvel
+            soft[1] = 1.0         # alpha/beta component
+
+        S = np.diag(soft)  # nx x nx
+
         # Costs (objective function)
         cost = 0
         for k in range(self.N):
             cost += cp.quad_form(x_diff[:,k], Q)
             cost += cp.quad_form(u_diff[:,k], R)
+
+            # penalize slack (only on softened component)
+            cost += rho * cp.sum_squares(cp.multiply(soft, self.eps[:, k]))
         
         # Terminal cost
         K, P, _ = dlqr(self.A, self.B, Q, R)
@@ -123,9 +142,15 @@ class MPCControl_base:
         constraints.append(self.A @ (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, :-1] + self.B @ (self.u_var - cp.reshape(self.us, (self.nu, 1))) == (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, 1:]) # x^+ - xs = A(x-xs) + B(u-us)
 
         # Inequality constraints
-        constraints.append(self.X.A @ self.x_var <= self.X.b.reshape(-1, 1)) # x in X for all k = 0, ..., N
+        #Need to remove, otherwise overwritten the soft
+        #constraints.append(self.X.A @ self.x_var <= self.X.b.reshape(-1, 1)) # x in X for all k = 0, ..., N
 
         constraints.append(self.U.A @ self.u_var <= self.U.b.reshape(-1, 1)) # u in U for all k = 0, ..., N-1
+
+        # Hard bounds for everyone, except softened indices get slack
+        # applies to all k = 0..N-1
+        constraints.append(self.x_var[:, :-1] <= x_max[:, None] + S @ self.eps)
+        constraints.append(self.x_var[:, :-1] >= x_min[:, None] - S @ self.eps)
 
         # Terminal constraint
         X_delta = Polyhedron.from_bounds(self.LBX - self.xs, self.UBX - self.xs)
@@ -192,7 +217,13 @@ class MPCControl_base:
         else:
             self.ut_par.value = u_target
 
-        self.ocp.solve()
+        self.ocp.solve(
+            solver=cp.PIQP,
+            warm_start=True,
+            max_iter=20000,
+            eps_abs=1e-4,
+            eps_rel=1e-4
+        )
 
         if self.ocp.status not in ("optimal", "optimal_inaccurate"):
             raise RuntimeError(f"QP problem failed: {self.ocp.status}")

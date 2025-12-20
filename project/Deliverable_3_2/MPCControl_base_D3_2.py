@@ -3,6 +3,8 @@ import numpy as np
 from control import dlqr
 from mpt4py import Polyhedron
 from scipy.signal import cont2discrete
+import matplotlib.pyplot as plt
+from itertools import combinations
 
 
 class MPCControl_base:
@@ -40,23 +42,6 @@ class MPCControl_base:
         self.nx = self.x_ids.shape[0]
         self.nu = self.u_ids.shape[0]
 
-        # Constraints
-        self.LBU = np.array([-np.deg2rad(15), -np.deg2rad(15), 40.0, -20.0])
-        self.UBU = np.array([ np.deg2rad(15),  np.deg2rad(15), 80.0,  20.0])
-
-        self.LBX = np.array([
-            -np.inf, -np.inf, -np.inf,
-            -np.deg2rad(10), -np.deg2rad(10), -np.inf,
-            -np.inf, -np.inf, -np.inf,
-            -np.inf, -np.inf, 0.0
-        ])
-        self.UBX = np.array([
-             np.inf,  np.inf,  np.inf,
-             np.deg2rad(10),  np.deg2rad(10),  np.inf,
-             np.inf,  np.inf,  np.inf,
-             np.inf,  np.inf,  np.inf
-        ])
-
         # System definition
         xids_xi, xids_xj = np.meshgrid(self.x_ids, self.x_ids)
         A_red = A[xids_xi, xids_xj].T
@@ -67,13 +52,40 @@ class MPCControl_base:
         self.xs = xs[self.x_ids]
         self.us = us[self.u_ids]
 
-        self._setup_controller()
+        # Bounds definition
+        UBU = np.array([np.deg2rad(15), np.deg2rad(15), 80, 20])
+        LBU = np.array([-np.deg2rad(15), -np.deg2rad(15), 40.0, -20.0])
+        UBX = np.array([np.inf,  np.inf,  np.inf,
+                        np.deg2rad(10),  np.deg2rad(10),  np.inf,
+                        np.inf,  np.inf,  np.inf,
+                        np.inf,  np.inf, np.inf])
+        LBX = np.array([-np.inf, -np.inf, -np.inf,
+                        -np.deg2rad(10), -np.deg2rad(10), -np.inf,
+                        -np.inf, -np.inf, -np.inf,
+                        -np.inf, -np.inf, 0.0])
+        self.UBU = UBU[self.u_ids]
+        self.LBU = LBU[self.u_ids]
+        self.UBX = UBX[self.x_ids]
+        self.LBX = LBX[self.x_ids]
 
-        # Track last reference used to build Xf
-        self._last_xref = None
-        self._last_uref = None
-        self._last_H = None
-        self._last_h = None
+        self.U = Polyhedron.from_bounds(self.LBU, self.UBU)
+        self.X = Polyhedron.from_bounds(self.LBX, self.UBX)
+
+        FULL_STATE_NAMES = [
+            r'$\omega_x$', r'$\omega_y$', r'$\omega_z$',
+            r'$\alpha$',   r'$\beta$',   r'$\gamma$',
+            r'$v_x$',      r'$v_y$',      r'$v_z$',
+            r'$x$',        r'$y$',        r'$z$']
+
+        self.red_state_names = [FULL_STATE_NAMES[i] for i in self.x_ids]
+
+        # Cache for terminal set to avoid computing it if target same as for previous call of get_u
+        self._cached_xt = None
+        self._cached_ut = None
+        self._cached_Xf = None
+
+        self._setup_controller() # this method is called at initialization of the controller -> the optimization problem and its variables are all acessible
+
 
     def _setup_controller(self) -> None:
         #################################################
@@ -82,95 +94,72 @@ class MPCControl_base:
         Q = getattr(self, "Q", np.eye(self.nx))
         R = getattr(self, "R", np.eye(self.nu))
 
-        # Terminal LQR
-        K, P, _ = dlqr(self.A, self.B, Q, R)
-        self.K = K
-        self.P = P
+        self.x_var = cp.Variable((self.nx, self.N + 1), name='x')
+        self.u_var = cp.Variable((self.nu, self.N), name='u')
+        self.x0_par = cp.Parameter((self.nx,), name='x0')
+        self.xt_par = cp.Parameter((self.nx,), name='xtarget')
+        self.ut_par = cp.Parameter((self.nu,), name= 'utarget')
+        
+        x_diff = self.x_var - cp.reshape(self.xt_par, (self.nx, 1))
+        u_diff = self.u_var - cp.reshape(self.ut_par, (self.nu, 1))
 
-        # Parameters
-        self.dx0_param = cp.Parameter(self.nx)   # x0 - x_ref
-        self.xref_param = cp.Parameter(self.nx)  # x_ref (reduced)
-        self.uref_param = cp.Parameter(self.nu)  # u_ref (reduced)
-
-        # Decision vars (delta)
-        self.dx = cp.Variable((self.nx, self.N + 1))
-        self.du = cp.Variable((self.nu, self.N))
-
-        dx = self.dx #dx = x - x_ref
-        du = self.du
-
-        # Cost
+        # Costs (objective function)
         cost = 0
         for k in range(self.N):
-            cost += cp.quad_form(dx[:, k]- self.xref_param, Q) + cp.quad_form(du[:, k]- self.uref_param, R)
-        cost += cp.quad_form(dx[:, self.N]- self.xref_param, P)
-
-        # Constraints
-        constraints = []
-
-        # Absolute bounds for this subsystem
-        u_min_abs = self.LBU[self.u_ids]
-        u_max_abs = self.UBU[self.u_ids]
-        x_min_abs = self.LBX[self.x_ids]
-        x_max_abs = self.UBX[self.x_ids]
-
-        # Add small margin to avoid numerical issues
-        margin_u = 1e-3
-        margin_x = 1e-3
-
-        x_min = (x_min_abs - self.xs) + margin_x
-        x_max = (x_max_abs - self.xs) - margin_x
-        u_min = (u_min_abs - self.us) + margin_u
-        u_max = (u_max_abs - self.us) - margin_u
-
-        Hx_list = []
-        hx_list = []
-
-        for i in range(self.nx):
-            if np.isfinite(x_max[i]):
-                e_i = np.zeros(self.nx)
-                e_i[i] = 1.0 # this picks out x_i
-                Hx_list.append(e_i)
-                hx_list.append(x_max[i])
-            if np.isfinite(x_min[i]):
-                e_i = np.zeros(self.nx)
-                e_i[i] = -1.0 # corresponds to -x_i
-                Hx_list.append(e_i)
-                hx_list.append(-x_min[i])
-
-        Hx = np.vstack(Hx_list) if Hx_list else np.zeros((0, self.nx))
-        hx = np.array(hx_list)   if hx_list else np.zeros((0,))
-
-        Hu = np.vstack([np.eye(self.nu), -np.eye(self.nu)])
-        hu = np.hstack([u_max, -u_min])
-
-        Hx_u = -Hu @ K
-        hx_u = hu
-
-        H0 = np.vstack([Hx, Hx_u]) # (2*nx + 2*nu) x nx
-        h0 = np.hstack([hx, hx_u]) # (2*nx + 2*nu)
-
-        X0 = Polyhedron.from_Hrep(H0, h0)
-
-        A_cl = self.A - self.B @ K
-        self.Xf = self._max_invariant_set(A_cl, X0)
-      
-        # Constraints over the horizon
-        for k in range(self.N):
-            # System dynamics constraints
-            constraints += [dx[:, k+1] == self.A @ dx[:, k] + self.B @ du[:, k]]
-            # Input constraints
-            constraints += [u_min <= du[:, k], du[:, k] <= u_max]
-            # State constraints
-            constraints += [x_min <= dx[:, k], dx[:, k] <= x_max]
-        # Init state constraint    
-        constraints += [dx[:, 0] == self.dx0_param]
+            cost += cp.quad_form(x_diff[:,k], Q)
+            cost += cp.quad_form(u_diff[:,k], R)
         
-        # Terminal constraint x_N ∈ X_f
-        Ff, ff = self.Xf.A, self.Xf.b
-        constraints += [Ff @ (dx[:, self.N] - self.xref_param) <= ff]
-        self.ocp = cp.Problem(cp.Minimize(cost), constraints)
+        # Terminal cost
+        K, P, _ = dlqr(self.A, self.B, Q, R)
+        K = -K
+        cost += cp.quad_form(x_diff[:, -1], P)        
 
+        # System (equality) constraint
+        constraints = []
+        constraints.append(self.x_var[:, 0] == self.x0_par)
+        constraints.append(self.A @ (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, :-1] + self.B @ (self.u_var - cp.reshape(self.us, (self.nu, 1))) == (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, 1:]) # x^+ - xs = A(x-xs) + B(u-us)
+
+        # Inequality constraints
+        constraints.append(self.X.A @ self.x_var <= self.X.b.reshape(-1, 1)) # x in X for all k = 0, ..., N
+
+        constraints.append(self.U.A @ self.u_var <= self.U.b.reshape(-1, 1)) # u in U for all k = 0, ..., N-1
+
+        # Terminal constraint
+        X_delta = Polyhedron.from_bounds(self.LBX - self.xs, self.UBX - self.xs)
+        U_delta = Polyhedron.from_bounds(self.LBU - self.us, self.UBU - self.us)
+
+        A_cl = self.A + self.B @ K
+
+        KU_delta = Polyhedron.from_Hrep(U_delta.A @ K, U_delta.b)
+        Omega = X_delta.intersect(KU_delta)
+        
+        i = 0
+        max_iter = 50
+        while i < max_iter :
+            H, h = Omega.A, Omega.b
+            pre_omega = Polyhedron.from_Hrep(H @ A_cl, h)
+            Omega_new = pre_omega.intersect(Omega)
+            Omega_new.minHrep(True)
+            _ = Omega_new.Vrep 
+            if Omega == Omega_new :
+                Omega = Omega_new
+                print("Maximum invariant set found after {0} iterations !\n" .format(i+1))
+                break
+            print("Not yet convgerged at iteration {0}" .format(i+1))
+            Omega = Omega_new
+            i += 1
+
+        self.X_f = Omega
+        # If empty terminal set -> infeasible
+        if self.X_f.Vrep.V.size == 0:
+            raise RuntimeError(
+                f"[{self.subsys_name}] Terminal set is EMPTY around current target; QP will be infeasible."
+            )
+        
+        constraints.append(self.X_f.A @ x_diff[:, -1] <= self.X_f.b) # x_N - x_t in Xf
+        constraints.append(self.U.A @ (self.ut_par + K @ x_diff[:, -1]) <= self.U.b) # u_N = u_t + K (x_N - x_t) in U
+
+        self.ocp = cp.Problem(cp.Minimize(cost), constraints)
 
         # YOUR CODE HERE
         #################################################
@@ -189,73 +178,29 @@ class MPCControl_base:
         #################################################
         # YOUR CODE HERE
 
-        # x0 is already reduced when called from MPCVelControl
-        x0_sub = x0
-
-        # Build xref_abs in *reduced coordinates*
-        xref_abs = self.xs.copy()  # default: regulate to trim in the reduced state
-
-        if x_target is not None:
-            if np.isscalar(x_target):
-                # tracking only the tracked state of this subsystem
-                xref_abs[self.tracked_idx] = float(x_target)
-            else:
-                # if someone passes a full 12D target (or reduced target), handle it
-                x_target = np.asarray(x_target).squeeze()
-                if x_target.shape[0] == self.nx:
-                    # already reduced
-                    xref_abs = x_target
-                else:
-                    # full state
-                    xref_abs = x_target[self.x_ids]
-
-        if u_target is None:
-            uref_abs = self.us.copy()
+        # Initialize QP parameters
+        self.x0_par.value = x0
+        if x_target is None:
+            self.xt_par.value = self.xs
         else:
-            uref_abs = u_target[self.u_ids]
+            self.xt_par.value = x_target
+        if u_target is None:
+            self.ut_par.value = self.us
+        else:
+            self.ut_par.value = u_target
 
-        # initial condition in delta coords
-        self.dx0_param.value = x0_sub - self.xs         # Δx0
-        self.xref_param.value = xref_abs - self.xs      # Δx_r
-        self.uref_param.value = uref_abs - self.us      # Δu_r  (if you have it)
+        self.ocp.solve()
 
-        self.ocp.solve(solver=cp.OSQP, warm_start=True, max_iter=20000, eps_abs=1e-4, eps_rel=1e-4)
-
-        du0 = self.du[:, 0].value
-        u0  = self.us + du0
-
-        x_traj = self.dx.value + self.xs[:, None]
-        u_traj = self.du.value + self.us[:, None]
-
+        if self.ocp.status not in ("optimal", "optimal_inaccurate"):
+            raise RuntimeError(f"QP problem failed: {self.ocp.status}")
+        
+        u0 = self.u_var.value[:, 0]
+        x_traj = self.x_var.value
+        u_traj = self.u_var.value
+        
         return u0, x_traj, u_traj
 
         # YOUR CODE HERE
         #################################################
-    
-    @staticmethod
-    def _max_invariant_set(A_cl, X: Polyhedron, max_iter = 20) -> Polyhedron:
-        """
-        Compute invariant set for an autonomous linear time invariant system x^+ = A_cl x
-        """
-        O = X
-        itr = 1
-        converged = False
-        while itr < max_iter:
-            Oprev = O
-            F, f = O.A, O.b
-            # Compute the pre-set
-            # O = Polyhedron.from_Hrep(np.vstack((F, F @ A_cl)), np.vstack((f, f)).reshape((-1,)))
-            preO = Polyhedron.from_Hrep(F @ A_cl, f)
-            O = preO.intersect(O)
-            
-            if O == Oprev:
-                converged = True
-                break
-            #print('Iteration {0}... not yet converged\n'.format(itr))
-            itr += 1
-        
-        if converged:
-            print('Maximum invariant set successfully computed after {0} iterations.'.format(itr))
-        return O
 
     

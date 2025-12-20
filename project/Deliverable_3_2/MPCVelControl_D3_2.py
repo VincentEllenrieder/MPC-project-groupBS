@@ -48,9 +48,9 @@ class MPCVelControl:
 
     def get_u(
         self,
-        t0: float,
+        t0: float, # initial timestamp 
         x0: np.ndarray,
-        x_target: np.ndarray = None,
+        x_target: np.ndarray = None, 
         u_target: np.ndarray = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         u0 = np.zeros(4)
@@ -58,56 +58,44 @@ class MPCVelControl:
         x_traj = np.zeros((12, self.mpc_x.N + 1))
         u_traj = np.zeros((4, self.mpc_x.N))
 
-        if x_target is None:
+        if x_target is None: # if no tracking target given, do regulation (stabilize at the origin, as x_s = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
             x_target = self.xs
 
-        if u_target is None:
+        if u_target is None: # if no tracking given, the final control input in the closed-loop trajectory should be u_s = 0, 0, 66.66666667, 0
             u_target = self.us
-        
-        # Extract scalar references from full state target
-        vx_ref    = x_target[6]
-        vy_ref    = x_target[7]
-        vz_ref    = x_target[8]
-        gamma_ref = x_target[5]
 
-        # ---- X velocity ----
-        (
-            u0[self.mpc_x.u_ids],
-            x_traj[self.mpc_x.x_ids],
-            u_traj[self.mpc_x.u_ids],
-        ) = self.mpc_x.get_u(
-            x0[self.mpc_x.x_ids],
-            x_target=vx_ref,
+        # these next 4 blocks of code use the methods get_u incorporated in each subsystem x, y, z and roll for finding :
+        # 1. the first optimal control input (u0) for this subsystem among the complete control input vector of size n_u_subsys.
+        # 2. the total open-loop trajectory of length N+1 (from 0 to N) of the states related to this subsystem among the complete set of states of size n_x_subsys x N+1.
+        # 3. the total open-loop trajectory of length N (from 1 to N) of the the optimal control inputs related to this subsystem among the complete control input vector of size n_u_subsys x N+1
+        # All these are compiled in the complete arrays of size | u0: 4 x 1 | x_traj: 12 x N+1 | u_traj: 4 x N
+        u0[self.mpc_x.u_ids], x_traj[self.mpc_x.x_ids, :], u_traj[self.mpc_x.u_ids, :] = (
+            self.mpc_x.get_u(
+                x0[self.mpc_x.x_ids],
+                x_target[self.mpc_x.x_ids],
+                u_target[self.mpc_x.u_ids],
+            )
         )
-
-        # ---- Y velocity ----
-        (
-            u0[self.mpc_y.u_ids],
-            x_traj[self.mpc_y.x_ids],
-            u_traj[self.mpc_y.u_ids],
-        ) = self.mpc_y.get_u(
-            x0[self.mpc_y.x_ids],
-            x_target=vy_ref,
+        u0[self.mpc_y.u_ids], x_traj[self.mpc_y.x_ids, :], u_traj[self.mpc_y.u_ids, :] = (
+            self.mpc_y.get_u(
+                x0[self.mpc_y.x_ids],
+                x_target[self.mpc_y.x_ids],
+                u_target[self.mpc_y.u_ids],
+            )
         )
-
-        # ---- Z velocity ----
-        (
-            u0[self.mpc_z.u_ids],
-            x_traj[self.mpc_z.x_ids],
-            u_traj[self.mpc_z.u_ids],
-        ) = self.mpc_z.get_u(
-            x0[self.mpc_z.x_ids],
-            x_target=vz_ref,
+        u0[self.mpc_z.u_ids], x_traj[self.mpc_z.x_ids, :], u_traj[self.mpc_z.u_ids, :] = (
+            self.mpc_z.get_u(
+                x0[self.mpc_z.x_ids],
+                x_target[self.mpc_z.x_ids],
+                u_target[self.mpc_z.u_ids],
+            )
         )
-
-        # ---- Roll ----
-        (
-            u0[self.mpc_roll.u_ids],
-            x_traj[self.mpc_roll.x_ids],
-            u_traj[self.mpc_roll.u_ids],
-        ) = self.mpc_roll.get_u(
-            x0[self.mpc_roll.x_ids],
-            x_target=gamma_ref,
+        u0[self.mpc_roll.u_ids], x_traj[self.mpc_roll.x_ids, :], u_traj[self.mpc_roll.u_ids, :] = ( 
+            self.mpc_roll.get_u(
+                x0[self.mpc_roll.x_ids],
+                x_target[self.mpc_roll.x_ids],
+                u_target[self.mpc_roll.u_ids],
+            )
         )
 
         return u0, x_traj, u_traj, t_traj
