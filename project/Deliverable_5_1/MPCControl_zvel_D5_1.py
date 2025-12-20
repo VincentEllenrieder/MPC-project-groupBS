@@ -4,7 +4,7 @@ import cvxpy as cp
 from MPCControl_base_D5_1 import MPCControl_base
 from control import dlqr
 
-
+'''
 class MPCControl_zvel(MPCControl_base):
     x_ids: np.ndarray = np.array([8])   # vz
     u_ids: np.ndarray = np.array([2])   # Pavg
@@ -19,26 +19,29 @@ class MPCControl_zvel_tuned_default(MPCControl_zvel):
 
     Q = np.array([[1/(vz_max**2)]])
     R = np.array([[1/(dP_max**2)]])
+'''
 
-class MPCControl_zvel_tuned_final(MPCControl_zvel):
+class MPCControl_zvel_tuned_final(MPCControl_base):
     x_ids: np.ndarray = np.array([8])   # vz
     u_ids: np.ndarray = np.array([2])   # Pavg
+    
+    def _setup_controller(self) -> None:
 
-    def __init__(self, A, B, xs, us, Ts, H):
+        ny = self.nu
+        nd = ny
         self.x_hat = np.zeros(self.nx)
         self.d_hat = np.zeros(self.nu)
         self.u_0 = np.zeros(self.nu)
-        self.L = np.zeros((2,1))
-
+        
         #Observer
         # x^+ = A x + B u + B d
         # d^+ = d
         # y   = 1 x + 0 d 
 
-        # A_hat = [A  Bd;  0 I] = [A  B; 0  I]
-        ny = self.nu
-        nd = ny
+        # -----------------Setting up augmented matrices-----------------
 
+        # A_hat = [A  Bd;  0 I] = [A  B; 0  I]
+        
         self.A_hat = np.vstack((
             np.hstack((self.A, self.B)),
             np.hstack((np.zeros((ny, self.nx)), np.eye(ny))))
@@ -50,22 +53,23 @@ class MPCControl_zvel_tuned_final(MPCControl_zvel):
         # C_hat = [C  Cd] = [1 0]
         self.C_hat = np.hstack((np.eye(ny,nd), np.zeros((ny,nd))))
 
-        super().__init__(A, B, xs, us, Ts, H)
-
-    
-    def _setup_controller(self) -> None:
+        #---------------Setting up Q and R matrices-----------------
 
         vz_max = 5.0
-        dP_max = min(80 - 66.7, 66.7 - 40.0)  # m/s per control step
+        P_max = 80  # m/s per control step
 
         self.Q = np.array([[20 * (1/(vz_max**2))]])
-        self.R = np.array([[(1/(dP_max**2)) / 2]])
+        self.R = np.array([[(50/(P_max**2))]])
+
+        #---------------Setting up the optimization problem-----------------
 
         self.x_var = cp.Variable((self.nx, self.N + 1), name='x')
         self.u_var = cp.Variable((self.nu, self.N), name='u')
+
         self.x0_par = cp.Parameter((self.nx,), name='x0')
         self.xt_par = cp.Parameter((self.nx,), name='xtarget')
         self.ut_par = cp.Parameter((self.nu,), name= 'utarget')
+        self.d_par = cp.Parameter((self.nu,), name='disturbance')
         
         x_diff = self.x_var - cp.reshape(self.xt_par, (self.nx, 1))
         u_diff = self.u_var - cp.reshape(self.ut_par, (self.nu, 1))
@@ -84,20 +88,28 @@ class MPCControl_zvel_tuned_final(MPCControl_zvel):
         # System (equality) constraint
         constraints = []
         constraints.append(self.x_var[:, 0] == self.x0_par)
-        constraints.append(self.A @ (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, :-1] + self.B @ (self.u_var - cp.reshape(self.us, (self.nu, 1))) == (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, 1:]) # x^+ - xs = A(x-xs) + B(u-us)
+        #constraints.append(self.A @ (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, :-1] + self.B @ (self.u_var - cp.reshape(self.us, (self.nu, 1))) + cp.reshape(self.d_par, (self.nu,1)) == (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, 1:]) # x^+ - xs = A(x-xs) + B(u-us)
+
+        #constraints.append(self.A @ (self.x_var)[:, :-1] + self.B @ (self.u_var) + cp.reshape(self.d_par, (self.nu,1)) == (self.x_var)[:, 1:]) # x^+ = A x + B u + d
+
+        constraints.append(
+        self.A @ (self.x_var - cp.reshape(self.xt_par, (self.nx, 1)))[:, :-1] + 
+        self.B @ (self.u_var - cp.reshape(self.ut_par, (self.nu, 1))) == 
+        (self.x_var - cp.reshape(self.xt_par, (self.nx, 1)))[:, 1:])
 
         # Inequality constraints
-        #constraints.append(self.X.A @ self.x_var <= self.X.b.reshape(-1, 1)) # x in X for all k = 0, ..., N
+        constraints.append(self.X.A @ self.x_var <= self.X.b.reshape(-1, 1)) # x in X for all k = 0, ..., N
 
-        #constraints.append(self.U.A @ self.u_var <= self.U.b.reshape(-1, 1)) # u in U for all k = 0, ..., N-1
+        constraints.append(self.U.A @ self.u_var <= self.U.b.reshape(-1, 1)) # u in U for all k = 0, ..., N-1
         
         self.ocp = cp.Problem(cp.Minimize(cost), constraints)
 
         # Place observer poles
-        poles = np.array([0.8, 0.7])
+        poles = np.array([0.9, 0.8])
         from scipy.signal import place_poles
         res = place_poles(self.A_hat.T, self.C_hat.T, poles)
         self.L = -res.gain_matrix.T
+        #print("Observer gain L (z-velocity): ", self.L)
 
 
     def get_u(
@@ -105,15 +117,8 @@ class MPCControl_zvel_tuned_final(MPCControl_zvel):
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         
         r = self.xs if x_target is None else x_target
-        
-        '''
-        A = self.A
-        B = self.B
-        nx = self.nx
-        nu = self.nu
-        ny = nu
-        nd = nu
-        '''
+
+        print("r = ", r)
 
         # x0 is the measurement
 
@@ -127,7 +132,7 @@ class MPCControl_zvel_tuned_final(MPCControl_zvel):
         [np.eye(ny), np.zeros((ny, self.nu))]])
        
         rhs_top = self.B @ self.d_hat.reshape(-1,1)
-        rhs_bot = np.array(r).reshape(-1,1) - self.d_hat.reshape(-1,1)
+        rhs_bot = np.array(r).reshape(-1,1)
         rhs = np.vstack((rhs_top, rhs_bot))
 
         solution = np.linalg.solve(M, rhs)
@@ -138,14 +143,24 @@ class MPCControl_zvel_tuned_final(MPCControl_zvel):
         self.xt_par.value = xs
         self.ut_par.value = us
 
+        print("Steady state xs (z-velocity): ", xs)
+        print("Steady state us (z-velocity): ", us)
+
         x_hat_aug = np.concatenate((self.x_hat, self.d_hat))
 
-        tmp = self.A_hat @ x_hat_aug + self.B_hat @ self.u_0 + self.L @ (self.C_hat @ x_hat_aug - x0)
+        tmp = self.A_hat @ x_hat_aug + self.B_hat @ self.u_0 + self.L @ (self.C_hat @ x_hat_aug - x0)	
 
         self.x_hat = tmp[:self.nx]
         self.d_hat = tmp[self.nx:]
 
+        self.d_par.value = self.d_hat
+
         self.x0_par.value = self.x_hat #estimator for the intial state
+
+        print("Estimated disturbance (z-velocity): ", self.d_hat)
+        print("Estimated state (z-velocity): ", self.x_hat) 
+
+        #self.ocp.solve()
 
         self.ocp.solve(
             solver=cp.PIQP,

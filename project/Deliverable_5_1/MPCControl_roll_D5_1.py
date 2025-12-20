@@ -37,4 +37,3 @@ class MPCControl_roll_tuned_final(MPCControl_roll):
     ])
 
     R = np.array([[1/(pdiff_max**2) * 1.5]])
-

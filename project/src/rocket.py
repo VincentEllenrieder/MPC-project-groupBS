@@ -441,7 +441,7 @@ class Rocket(RocketBase):
         if self.fuel_consumption < self.mass/2:
             self.fuel_consumption += self.fuel_rate * Ts * u[2] / 100
         else:
-            raise ValueError("Fuel exhausted")
+            #raise ValueError("Fuel exhausted")
             u[2] = 0.0; u[3] = 0.0
         if self.fuel_consumption > 0:
             print(f"Fuel left: {float(self.mass/2 - self.fuel_consumption):.2f} kg", end=', ')

@@ -29,7 +29,7 @@ class MPCControl_xvel_tuned_final(MPCControl_xvel):
     x_ids = np.array([1, 4, 6])
     u_ids = np.array([1])
 
-    rho_slack = 1e6
+    rho_slack = 1e7
 
     beta_max = np.deg2rad(10)
     d2_max   = np.deg2rad(15)
