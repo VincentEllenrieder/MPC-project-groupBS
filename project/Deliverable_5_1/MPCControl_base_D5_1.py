@@ -122,6 +122,10 @@ class MPCControl_base:
 
         S = np.diag(soft)  # nx x nx
 
+
+        #omega_x0 = 0; omega_y0 = 0; omega_z0 = 0; alpha0 = 0; beta0 = 0; gamma0 = 0; v_x0 = 0; v_y0 = 0; v_z0 = 0
+        #x0_full = np.array([omega_x0, omega_y0, omega_z0, alpha0, beta0, gamma0, v_x0, v_y0, v_z0, 0, 0, 0])
+
         # Costs (objective function)
         cost = 0
         for k in range(self.N):
@@ -217,13 +221,14 @@ class MPCControl_base:
         else:
             self.ut_par.value = u_target
 
+        # self.ocp.solve()
         self.ocp.solve(
-            solver=cp.PIQP,
-            warm_start=True,
-            max_iter=20000,
-            eps_abs=1e-4,
-            eps_rel=1e-4
-        )
+                    solver=cp.PIQP,
+                    warm_start=True,
+                    max_iter=20000,
+                    eps_abs=1e-4,
+                    eps_rel=1e-4
+                )
 
         if self.ocp.status not in ("optimal", "optimal_inaccurate"):
             raise RuntimeError(f"QP problem failed: {self.ocp.status}")

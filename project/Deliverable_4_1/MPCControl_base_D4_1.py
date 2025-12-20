@@ -222,7 +222,7 @@ class MPCControl_base:
             self.ut_par.value = u_target
 
         self.ocp.solve()
-
+        
         if self.ocp.status not in ("optimal", "optimal_inaccurate"):
             raise RuntimeError(f"QP problem failed: {self.ocp.status}")
         
