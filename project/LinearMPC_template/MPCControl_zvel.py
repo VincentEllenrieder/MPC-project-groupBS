@@ -18,4 +18,4 @@ class MPCControl_zvel(MPCControl_base):
 
     Q = np.array([[1]])
 
-    R = np.array([[1/(Pmoy_max**2)]])
+    R = np.array([[50/(Pmoy_max**2)]])
