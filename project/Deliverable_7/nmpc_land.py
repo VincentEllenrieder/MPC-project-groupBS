@@ -22,8 +22,17 @@ class NmpcCtrl:
         # symbolic dynamics f(x,u) from rocket
         self.f = lambda x,u: rocket.f_symbolic(x,u)[0]
 
+        self._setup_controller()
+
     def _setup_controller(self) -> None:
         
+        opti = ca.Opti()
+
+        # decision variables
+        X = opti.variable(12, N + 1)
+        U = opti.variable(4, N)
+        X0 = opti.parameter(2, 1)
+
         self.ocp = ...
 
     def get_u(self, t0: float, x0: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
