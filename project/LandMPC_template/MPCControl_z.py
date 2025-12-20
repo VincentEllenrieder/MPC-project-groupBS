@@ -7,10 +7,6 @@ class MPCControl_z(MPCControl_base):
     x_ids: np.ndarray = np.array([8, 11])
     u_ids: np.ndarray = np.array([2])
 
-    # only useful for part 5 of the project
-    d_estimate: np.ndarray
-    d_gain: float
-
     def _setup_controller(self) -> None:
         #################################################
         # YOUR CODE HERE
