@@ -37,9 +37,9 @@ class MPCControl_yvel_tuned_final(MPCControl_yvel):
     vy_max = 5.0
 
     Q = np.diag([
-        8 * 1/(wx_max**2),
+        60 * 1/(wx_max**2),
         8 *1/(alpha_max**2),
-        40 * 1/(vy_max**2),
+        60 * 1/(vy_max**2),
     ])
 
     R = np.array([[(1/(d1_max**2)) / 30]])

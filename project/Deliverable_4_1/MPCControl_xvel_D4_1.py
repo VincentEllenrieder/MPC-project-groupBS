@@ -37,9 +37,9 @@ class MPCControl_xvel_tuned_final(MPCControl_xvel):
     vx_max   = 5.0
 
     Q = np.diag([
-        8 * 1/(wy_max**2),
+        60 * 1/(wy_max**2),
         8 * 1/(beta_max**2),
-        40 * 1/(vx_max**2),
+        60 * 1/(vx_max**2),
     ])
 
     R = np.array([[(1/(d2_max**2)) / 30]])

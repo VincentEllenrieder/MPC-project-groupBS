@@ -32,6 +32,11 @@ class MPCControl_zvel_tuned_final(MPCControl_base):
         self.x_hat = np.zeros(self.nx)
         self.d_hat = np.zeros(self.nu)
         self.u_0 = np.zeros(self.nu)
+
+        # store history
+        self.d_history = []
+        self.x_hat_history = []
+        self.estimation_error_history = []
         
         #Observer
         # x^+ = A x + B u + B d
@@ -58,7 +63,7 @@ class MPCControl_zvel_tuned_final(MPCControl_base):
         vz_max = 5.0
         P_max = 80  # m/s per control step
 
-        self.Q = np.array([[20 * (1/(vz_max**2))]])
+        self.Q = np.array([[25 * (1/(vz_max**2))]])
         self.R = np.array([[(50/(P_max**2))]])
 
         #---------------Setting up the optimization problem-----------------
@@ -105,7 +110,7 @@ class MPCControl_zvel_tuned_final(MPCControl_base):
         self.ocp = cp.Problem(cp.Minimize(cost), constraints)
 
         # Place observer poles
-        poles = np.array([0.9, 0.8])
+        poles = np.array([0.5, 0.6])
         from scipy.signal import place_poles
         res = place_poles(self.A_hat.T, self.C_hat.T, poles)
         self.L = -res.gain_matrix.T
@@ -117,13 +122,11 @@ class MPCControl_zvel_tuned_final(MPCControl_base):
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         
         r = self.xs if x_target is None else x_target
-
         print("r = ", r)
 
         # x0 is the measurement
 
-        #target selection, Compute steady state
-
+        #---------------Target selection, Compute steady state---------------
         ny = self.nu
         nd = ny
 
@@ -147,6 +150,7 @@ class MPCControl_zvel_tuned_final(MPCControl_base):
         print("Steady state us (z-velocity): ", us)
 
         x_hat_aug = np.concatenate((self.x_hat, self.d_hat))
+        self.estimation_error_history.append(self.x_hat - x0)
 
         tmp = self.A_hat @ x_hat_aug + self.B_hat @ self.u_0 + self.L @ (self.C_hat @ x_hat_aug - x0)	
 
@@ -154,11 +158,14 @@ class MPCControl_zvel_tuned_final(MPCControl_base):
         self.d_hat = tmp[self.nx:]
 
         self.d_par.value = self.d_hat
-
         self.x0_par.value = self.x_hat #estimator for the intial state
+        self.d_history.append(self.d_hat.copy())
+        self.x_hat_history.append(self.x_hat.copy())
 
         print("Estimated disturbance (z-velocity): ", self.d_hat)
         print("Estimated state (z-velocity): ", self.x_hat) 
+
+        # ---------------solve the QP and get u0-----------------
 
         #self.ocp.solve()
 
