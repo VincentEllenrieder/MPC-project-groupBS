@@ -23,10 +23,6 @@ class MPCControl_base:
     Ts: float
     H: float
     N: int
-    UBU : np.ndarray
-    LBU : np.ndarray
-    UBX : np.ndarray
-    LBX : np.ndarray
 
     """Optimization problem"""
     ocp: cp.Problem
