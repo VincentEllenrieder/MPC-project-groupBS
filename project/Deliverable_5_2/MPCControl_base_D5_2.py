@@ -23,7 +23,7 @@ class MPCControl_base:
     Ts: float
     H: float
     N: int
-
+    
     """Optimization problem"""
     ocp: cp.Problem
 
@@ -197,7 +197,7 @@ class MPCControl_base:
         else:
             self.ut_par.value = u_target
 
-        #self.ocp.solve()
+        # self.ocp.solve()
         self.ocp.solve(
             solver=cp.PIQP,
             warm_start=True,
@@ -205,7 +205,7 @@ class MPCControl_base:
             eps_abs=1e-4,
             eps_rel=1e-4
         )
-        
+
         if self.ocp.status not in ("optimal", "optimal_inaccurate"):
             raise RuntimeError(f"QP problem failed: {self.ocp.status}")
         
