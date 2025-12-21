@@ -119,36 +119,18 @@ class MPCControl_base:
         constraints.append(self.A @ (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, :-1] + self.B @ (self.u_var - cp.reshape(self.us, (self.nu, 1))) == (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, 1:]) # x^+ - xs = A(x-xs) + B(u-us)
 
         # Inequality constraints
-        constraints.append(self.X.A @ self.x_var <= self.X.b.reshape(-1, 1)) # x in X for all k = 0, ..., N
-
+        constraints.append(self.X.A @ self.x_var[:,:-1] <= self.X.b.reshape(-1, 1)) # x in X for all k = 0, ..., N-1
         constraints.append(self.U.A @ self.u_var <= self.U.b.reshape(-1, 1)) # u in U for all k = 0, ..., N-1
 
         # Terminal constraint
         X_delta = Polyhedron.from_bounds(self.LBX - self.xs, self.UBX - self.xs)
         U_delta = Polyhedron.from_bounds(self.LBU - self.us, self.UBU - self.us)
+        KU_delta = Polyhedron.from_Hrep(U_delta.A @ K, U_delta.b)
+        X_delta_int_KU_delta = X_delta.intersect(KU_delta)
 
         A_cl = self.A + self.B @ K
-
-        KU_delta = Polyhedron.from_Hrep(U_delta.A @ K, U_delta.b)
-        Omega = X_delta.intersect(KU_delta)
         
-        i = 0
-        max_iter = 50
-        while i < max_iter :
-            H, h = Omega.A, Omega.b
-            pre_omega = Polyhedron.from_Hrep(H @ A_cl, h)
-            Omega_new = pre_omega.intersect(Omega)
-            Omega_new.minHrep(True)
-            _ = Omega_new.Vrep 
-            if Omega == Omega_new :
-                Omega = Omega_new
-                print("Maximum invariant set found after {0} iterations !\n" .format(i+1))
-                break
-            print("Not yet convgerged at iteration {0}" .format(i+1))
-            Omega = Omega_new
-            i += 1
-
-        self.X_f = Omega
+        self.X_f = self._max_invariant_set(A_cl, X_delta_int_KU_delta)
         # If empty terminal set -> infeasible
         if self.X_f.Vrep.V.size == 0:
             raise RuntimeError(
@@ -202,4 +184,21 @@ class MPCControl_base:
         # YOUR CODE HERE
         #################################################
 
-    
+    @staticmethod
+    def _max_invariant_set(A_cl: np.ndarray, X_int_KU: Polyhedron, max_iter = 50) -> Polyhedron:
+        Omega = X_int_KU
+        i = 0
+        while i < max_iter :
+            H, h = Omega.A, Omega.b
+            pre_omega = Polyhedron.from_Hrep(H @ A_cl, h)
+            Omega_new = pre_omega.intersect(Omega)
+            Omega_new.minHrep(True)
+            _ = Omega_new.Vrep 
+            if Omega == Omega_new :
+                Omega = Omega_new
+                print("Maximum invariant set found after {0} iterations !\n" .format(i+1))
+                break
+            print("Not yet convgerged at iteration {0}" .format(i+1))
+            Omega = Omega_new
+            i += 1
+        return Omega
