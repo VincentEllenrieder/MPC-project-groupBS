@@ -223,12 +223,12 @@ class MPCControl_base:
 
         # self.ocp.solve()
         self.ocp.solve(
-                    solver=cp.PIQP,
-                    warm_start=True,
-                    max_iter=20000,
-                    eps_abs=1e-4,
-                    eps_rel=1e-4
-                )
+            solver=cp.PIQP,
+            warm_start=True,
+            max_iter=20000,
+            eps_abs=1e-4,
+            eps_rel=1e-4
+        )
 
         if self.ocp.status not in ("optimal", "optimal_inaccurate"):
             raise RuntimeError(f"QP problem failed: {self.ocp.status}")
