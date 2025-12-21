@@ -49,7 +49,6 @@ class NmpcCtrl:
         Ad, Bd, _, _, _ = cont2discrete((A, B, np.eye(12), np.zeros((12,4))), self.Ts)
         _, P, _ = dlqr(Ad, Bd, self.Q, self.R)
         self.P = P
-        print("P = ", P)
 
         self._X_init = None
         self._U_init = None
@@ -158,10 +157,44 @@ class NmpcCtrl:
         return x + (k1 + 2 * k2 + 2 * k3 + k4) / 6
     
 class NmpcCtrl_Tuned1(NmpcCtrl):
+
+
+    wz_max    = np.deg2rad(120)
+    gamma_max = np.deg2rad(90)
+    Pdiff_max = 20.0
+
+    beta_max = np.deg2rad(80)
+    d2_max   = np.deg2rad(15)
+    wy_max   = np.deg2rad(60)
+    vx_max   = 5.0
+
+    alpha_max = np.deg2rad(90)
+    d1_max   = np.deg2rad(15)
+    wx_max = np.deg2rad(60)
+    vy_max = 5.0
+
+    vz_max = 5.0
+    P_max = 80
+
+    x_max = 100
+    y_max = 100
+    z_max = 200
+
     Q = np.diag([  # 12 entries
-        0.5, 0.5, 0.5,          # wx wy wz
-        10.0, 10.0, 30.0,       # alpha beta gamma
-        20.0, 20.0, 5.0,       # vx vy vz
-        200.0, 200.0, 15000.0     # x y z
+        1 * (1/(wx_max**2)), 1 * (1/(wy_max**2)), 1 * (1/(wz_max**2)),              # wx wy wz
+        1 * (1/(alpha_max**2)), 1 * (1/(beta_max**2)), 1 * (1/(gamma_max**2)),      # alpha beta gamma
+        1 * (1/(vx_max**2)), 1 * (1/(vy_max**2)), 1 * (1/(vz_max**2)),              # vx vy vz
+        1 * (1/(x_max**2)), 1 * (1/(y_max**2)), 1 * (1/(z_max**2))                  # x y z
     ])
-    R = np.diag([1.0, 1.0, 0.001, 1])
+
+    Q = Q.copy()
+    Q[11,11] *= 8000   # z
+    Q[9,9]   *= 550    # x
+    Q[10,10] *= 550    # y
+    Q[6,6]   *= 0.95   # vx
+    Q[7,7]   *= 0.95   # vy
+    Q[8,8]   *= 0.5    # vz small to allow dive
+
+    R = np.diag([1 * (1/(d1_max**2)), 1 * (1/(d2_max**2)), 1 * (1/(P_max**2)), 1 * (1/(Pdiff_max**2))])
+
+
