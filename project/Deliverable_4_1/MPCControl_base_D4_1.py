@@ -109,9 +109,6 @@ class MPCControl_base:
         x_min = self.LBX
         x_max = self.UBX
 
-        #only for the 3-state subsystems (xvel, yvel), soften the second reduced state (index 1).
-        # In your xvel subsystem, x_ids = [1, 4, 6] → reduced state index 1 corresponds to global state 4 = β.
-        # In yvel, x_ids = [0, 3, 7] → reduced index 1 corresponds to global state 3 = α.
         soft = np.zeros(self.nx)
         if self.nx == 3:          # xvel / yvel
             soft[1] = 1.0         # alpha/beta component
@@ -212,6 +209,20 @@ class MPCControl_base:
         u0 = self.u_var.value[:, 0]
         x_traj = self.x_var.value
         u_traj = self.u_var.value
+
+        eps_val = self.eps.value  # shape (nx, N), nonneg
+        soft_idx = 1 if self.nx == 3 else None
+
+        if eps_val is None or soft_idx is None:
+            slack0 = 0.0
+            slackmax = 0.0
+        else:
+            slack0 = float(eps_val[soft_idx, 0])
+            slackmax = float(np.max(eps_val[soft_idx, :]))
+
+        # expose for wrapper to read (this is not "overwriting history", it's just current-solve output)
+        self._slack0_this_solve = slack0
+        self._slackmax_this_solve = slackmax
 
         return u0, x_traj, u_traj
 

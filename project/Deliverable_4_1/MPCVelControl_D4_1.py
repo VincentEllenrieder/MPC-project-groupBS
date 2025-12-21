@@ -15,7 +15,14 @@ class MPCVelControl:
     mpc_roll: MPCControl_roll_tuned_final
 
     def __init__(self) -> None:
-        pass
+        #pass
+        self.slack_log = {
+            "t": [],
+            "alpha0": [],   # slack at k=0 for alpha subsystem
+            "beta0":  [],   # slack at k=0 for beta subsystem
+            "alpha_max": [],# max slack over horizon
+            "beta_max":  [],
+        }
 
     def new_controller(self, rocket: Rocket, Ts: float, H: float) -> None:
         self.xs, self.us = rocket.trim()
@@ -97,5 +104,14 @@ class MPCVelControl:
                 u_target[self.mpc_roll.u_ids],
             )
         )
+
+        self.slack_log["t"].append(t0)
+
+        self.slack_log["alpha0"].append(getattr(self.mpc_y, "_slack0_this_solve", 0.0))
+        self.slack_log["alpha_max"].append(getattr(self.mpc_y, "_slackmax_this_solve", 0.0))
+
+        self.slack_log["beta0"].append(getattr(self.mpc_x, "_slack0_this_solve", 0.0))
+        self.slack_log["beta_max"].append(getattr(self.mpc_x, "_slackmax_this_solve", 0.0))
+
 
         return u0, x_traj, u_traj, t_traj
