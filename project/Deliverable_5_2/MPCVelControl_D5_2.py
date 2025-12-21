@@ -2,10 +2,10 @@ import numpy as np
 
 from src.rocket import Rocket
 
-from MPCControl_xvel_D4_1 import MPCControl_xvel_tuned_final
-from MPCControl_yvel_D4_1 import MPCControl_yvel_tuned_final
-from MPCControl_zvel_D4_1 import MPCControl_zvel_tuned_final
-from MPCControl_roll_D4_1 import MPCControl_roll_tuned_final
+from MPCControl_xvel_D5_2 import MPCControl_xvel_tuned_final
+from MPCControl_yvel_D5_2 import MPCControl_yvel_tuned_final
+from MPCControl_zvel_D5_2 import MPCControl_zvel_tuned_final
+from MPCControl_roll_D5_2 import MPCControl_roll_tuned_final
 
 
 class MPCVelControl:
@@ -15,14 +15,7 @@ class MPCVelControl:
     mpc_roll: MPCControl_roll_tuned_final
 
     def __init__(self) -> None:
-        #pass
-        self.slack_log = {
-            "t": [],
-            "alpha0": [],   # slack at k=0 for alpha subsystem
-            "beta0":  [],   # slack at k=0 for beta subsystem
-            "alpha_max": [],# max slack over horizon
-            "beta_max":  [],
-        }
+        pass
 
     def new_controller(self, rocket: Rocket, Ts: float, H: float) -> None:
         self.xs, self.us = rocket.trim()
@@ -104,14 +97,5 @@ class MPCVelControl:
                 u_target[self.mpc_roll.u_ids],
             )
         )
-
-        self.slack_log["t"].append(t0)
-
-        self.slack_log["alpha0"].append(getattr(self.mpc_y, "_slack0_this_solve", 0.0))
-        self.slack_log["alpha_max"].append(getattr(self.mpc_y, "_slackmax_this_solve", 0.0))
-
-        self.slack_log["beta0"].append(getattr(self.mpc_x, "_slack0_this_solve", 0.0))
-        self.slack_log["beta_max"].append(getattr(self.mpc_x, "_slackmax_this_solve", 0.0))
-
 
         return u0, x_traj, u_traj, t_traj

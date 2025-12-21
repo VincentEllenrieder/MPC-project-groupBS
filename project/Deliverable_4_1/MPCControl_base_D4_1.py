@@ -23,10 +23,6 @@ class MPCControl_base:
     Ts: float
     H: float
     N: int
-    UBU : np.ndarray
-    LBU : np.ndarray
-    UBX : np.ndarray
-    LBX : np.ndarray
 
     """Optimization problem"""
     ocp: cp.Problem
@@ -113,18 +109,11 @@ class MPCControl_base:
         x_min = self.LBX
         x_max = self.UBX
 
-        #only for the 3-state subsystems (xvel, yvel), soften the second reduced state (index 1).
-        # In your xvel subsystem, x_ids = [1, 4, 6] → reduced state index 1 corresponds to global state 4 = β.
-        # In yvel, x_ids = [0, 3, 7] → reduced index 1 corresponds to global state 3 = α.
         soft = np.zeros(self.nx)
         if self.nx == 3:          # xvel / yvel
             soft[1] = 1.0         # alpha/beta component
 
         S = np.diag(soft)  # nx x nx
-
-
-        #omega_x0 = 0; omega_y0 = 0; omega_z0 = 0; alpha0 = 0; beta0 = 0; gamma0 = 0; v_x0 = 0; v_y0 = 0; v_z0 = 0
-        #x0_full = np.array([omega_x0, omega_y0, omega_z0, alpha0, beta0, gamma0, v_x0, v_y0, v_z0, 0, 0, 0])
 
         # Costs (objective function)
         cost = 0
@@ -147,7 +136,7 @@ class MPCControl_base:
 
         # Inequality constraints
         #Need to remove, otherwise overwritten the soft
-        #constraints.append(self.X.A @ self.x_var <= self.X.b.reshape(-1, 1)) # x in X for all k = 0, ..., N
+        #constraints.append(self.X.A @ self.x_var[:,:-1] <= self.X.b.reshape(-1, 1)) # x in X for all k = 0, ..., N-1
 
         constraints.append(self.U.A @ self.u_var <= self.U.b.reshape(-1, 1)) # u in U for all k = 0, ..., N-1
 
@@ -159,35 +148,19 @@ class MPCControl_base:
         # Terminal constraint
         X_delta = Polyhedron.from_bounds(self.LBX - self.xs, self.UBX - self.xs)
         U_delta = Polyhedron.from_bounds(self.LBU - self.us, self.UBU - self.us)
+        KU_delta = Polyhedron.from_Hrep(U_delta.A @ K, U_delta.b)
+        X_delta_int_KU_delta = X_delta.intersect(KU_delta)
 
         A_cl = self.A + self.B @ K
 
-        KU_delta = Polyhedron.from_Hrep(U_delta.A @ K, U_delta.b)
-        Omega = X_delta.intersect(KU_delta)
-        
-        i = 0
-        max_iter = 50
-        while i < max_iter :
-            H, h = Omega.A, Omega.b
-            pre_omega = Polyhedron.from_Hrep(H @ A_cl, h)
-            Omega_new = pre_omega.intersect(Omega)
-            Omega_new.minHrep(True)
-            _ = Omega_new.Vrep 
-            if Omega == Omega_new :
-                Omega = Omega_new
-                print("Maximum invariant set found after {0} iterations !\n" .format(i+1))
-                break
-            print("Not yet convgerged at iteration {0}" .format(i+1))
-            Omega = Omega_new
-            i += 1
-
-        self.X_f = Omega
+        self.X_f = self._max_invariant_set(A_cl, X_delta_int_KU_delta)
         # If empty terminal set -> infeasible
         if self.X_f.Vrep.V.size == 0:
             raise RuntimeError(
                 f"[{self.subsys_name}] Terminal set is EMPTY around current target; QP will be infeasible."
             )
         
+
         constraints.append(self.X_f.A @ x_diff[:, -1] <= self.X_f.b) # x_N - x_t in Xf
         constraints.append(self.U.A @ (self.ut_par + K @ x_diff[:, -1]) <= self.U.b) # u_N = u_t + K (x_N - x_t) in U
 
@@ -221,7 +194,14 @@ class MPCControl_base:
         else:
             self.ut_par.value = u_target
 
-        self.ocp.solve()
+        #self.ocp.solve()
+        self.ocp.solve(
+            solver=cp.PIQP,
+            warm_start=True,
+            max_iter=20000,
+            eps_abs=1e-4,
+            eps_rel=1e-4
+        )
         
         if self.ocp.status not in ("optimal", "optimal_inaccurate"):
             raise RuntimeError(f"QP problem failed: {self.ocp.status}")
@@ -230,9 +210,40 @@ class MPCControl_base:
         x_traj = self.x_var.value
         u_traj = self.u_var.value
 
+        eps_val = self.eps.value  # shape (nx, N), nonneg
+        soft_idx = 1 if self.nx == 3 else None
+
+        if eps_val is None or soft_idx is None:
+            slack0 = 0.0
+            slackmax = 0.0
+        else:
+            slack0 = float(eps_val[soft_idx, 0])
+            slackmax = float(np.max(eps_val[soft_idx, :]))
+
+        # expose for wrapper to read (this is not "overwriting history", it's just current-solve output)
+        self._slack0_this_solve = slack0
+        self._slackmax_this_solve = slackmax
+
         return u0, x_traj, u_traj
 
         # YOUR CODE HERE
         #################################################
 
-    
+    @staticmethod
+    def _max_invariant_set(A_cl: np.ndarray, X_int_KU: Polyhedron, max_iter = 50) -> Polyhedron:
+        Omega = X_int_KU
+        i = 0
+        while i < max_iter :
+            H, h = Omega.A, Omega.b
+            pre_omega = Polyhedron.from_Hrep(H @ A_cl, h)
+            Omega_new = pre_omega.intersect(Omega)
+            Omega_new.minHrep(True)
+            _ = Omega_new.Vrep 
+            if Omega == Omega_new :
+                Omega = Omega_new
+                print("Maximum invariant set found after {0} iterations !\n" .format(i+1))
+                break
+            print("Not yet convgerged at iteration {0}" .format(i+1))
+            Omega = Omega_new
+            i += 1
+        return Omega

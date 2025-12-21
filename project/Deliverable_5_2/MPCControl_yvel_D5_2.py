@@ -1,6 +1,6 @@
 import numpy as np
 
-from MPCControl_base_D5_1 import MPCControl_base
+from MPCControl_base_D5_2 import MPCControl_base
 
 class MPCControl_yvel_tuned_final(MPCControl_base):
     x_ids: np.ndarray = np.array([0, 3, 7]) #wx, alpha, vy
