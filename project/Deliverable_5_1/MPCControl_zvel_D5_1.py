@@ -93,10 +93,8 @@ class MPCControl_zvel_tuned_final(MPCControl_base):
         # System (equality) constraint
         constraints = []
         constraints.append(self.x_var[:, 0] == self.x0_par)
-        #constraints.append(self.A @ (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, :-1] + self.B @ (self.u_var - cp.reshape(self.us, (self.nu, 1))) + cp.reshape(self.d_par, (self.nu,1)) == (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, 1:]) # x^+ - xs = A(x-xs) + B(u-us)
-
-        #constraints.append(self.A @ (self.x_var)[:, :-1] + self.B @ (self.u_var) + cp.reshape(self.d_par, (self.nu,1)) == (self.x_var)[:, 1:]) # x^+ = A x + B u + d
-
+         
+        # x^+ - xt = A(x-xt) + B(u-ut)
         constraints.append(
         self.A @ (self.x_var - cp.reshape(self.xt_par, (self.nx, 1)))[:, :-1] + 
         self.B @ (self.u_var - cp.reshape(self.ut_par, (self.nu, 1))) == 
@@ -114,7 +112,6 @@ class MPCControl_zvel_tuned_final(MPCControl_base):
         from scipy.signal import place_poles
         res = place_poles(self.A_hat.T, self.C_hat.T, poles)
         self.L = -res.gain_matrix.T
-        #print("Observer gain L (z-velocity): ", self.L)
 
 
     def get_u(
