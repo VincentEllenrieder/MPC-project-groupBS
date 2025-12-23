@@ -1,9 +1,9 @@
 import cvxpy as cp
 import numpy as np
+import matplotlib.pyplot as plt
 from control import dlqr
 from mpt4py import Polyhedron
 from scipy.signal import cont2discrete
-import matplotlib.pyplot as plt
 from itertools import combinations
 
 
@@ -127,19 +127,17 @@ class MPCControl_base:
         constraints.append(self.A @ (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, :-1] + self.B @ (self.u_var - cp.reshape(self.us, (self.nu, 1))) == (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, 1:]) # x^+ - xs = A(x-xs) + B(u-us)
 
         # Inequality constraints
-        constraints.append(self.X.A @ self.x_var <= self.X.b.reshape(-1, 1)) # x in X for all k = 0, ..., N
-
+        constraints.append(self.X.A @ self.x_var[:, :-1] <= self.X.b.reshape(-1, 1)) # x in X for all k = 0, ..., N-1
         constraints.append(self.U.A @ self.u_var <= self.U.b.reshape(-1, 1)) # u in U for all k = 0, ..., N-1
 
         # Terminal constraint
         X_delta = Polyhedron.from_bounds(self.LBX - self.xs, self.UBX - self.xs)
         U_delta = Polyhedron.from_bounds(self.LBU - self.us, self.UBU - self.us)
-
-        A_cl = self.A + self.B @ K
-
         KU_delta = Polyhedron.from_Hrep(U_delta.A @ K, U_delta.b)
         Omega = X_delta.intersect(KU_delta)
         
+        A_cl = self.A + self.B @ K
+
         i = 0
         max_iter = 50
         while i < max_iter :
@@ -160,7 +158,7 @@ class MPCControl_base:
         # If empty terminal set -> infeasible
         if self.X_f.Vrep.V.size == 0:
             raise RuntimeError(
-                f"[{self.subsys_name}] Terminal set is EMPTY around current target; QP will be infeasible."
+                f"[{self.subsys_name}] Terminal set is EMPTY around current target -> QP will be infeasible."
             )
         
         constraints.append(self.X_f.A @ x_diff[:, -1] <= self.X_f.b) # x_N - x_t in Xf

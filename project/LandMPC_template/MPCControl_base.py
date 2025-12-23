@@ -21,6 +21,14 @@ class MPCControl_base:
     Ts: float
     H: float
     N: int
+    subsys_name: str
+    UBX: np.ndarray
+    LBX: np.ndarray
+    UBU: np.ndarray
+    LBU: np.ndarray
+    X: Polyhedron
+    U: Polyhedron
+
 
     """Optimization problem"""
     ocp: cp.Problem
@@ -49,6 +57,37 @@ class MPCControl_base:
         self.A, self.B = self._discretize(A_red, B_red, Ts)
         self.xs = xs[self.x_ids]
         self.us = us[self.u_ids]
+
+        self.UBU = np.array([np.deg2rad(15), np.deg2rad(15), 80, 20])
+        self.LBU = np.array([-np.deg2rad(15), -np.deg2rad(15), 40.0, -20.0])
+        self.UBX = np.array([np.inf,  np.inf,  np.inf,
+                        np.deg2rad(10),  np.deg2rad(10),  np.inf,
+                        np.inf,  np.inf,  np.inf,
+                        np.inf,  np.inf, np.inf])
+        self.LBX = np.array([-np.inf, -np.inf, -np.inf,
+                        -np.deg2rad(10), -np.deg2rad(10), -np.inf,
+                        -np.inf, -np.inf, -np.inf,
+                        -np.inf, -np.inf, 0.0])
+        self.UBU = self.UBU[self.u_ids]
+        self.LBU = self.LBU[self.u_ids]
+        self.UBX = self.UBX[self.x_ids]
+        self.LBX = self.LBX[self.x_ids]
+        print(f"Subsystem {self.subsys_name}: \n")
+        print(f"Input upper bounds are {self.UBU}")
+        print(f"Input lower bounds are {self.LBU}")
+        print(f"State upper bounds are {self.UBX}")
+        print(f"State lower bounds are {self.LBX} \n")
+
+        self.U = Polyhedron.from_bounds(self.LBU, self.UBU)
+        self.X = Polyhedron.from_bounds(self.LBX, self.UBX)
+
+        FULL_STATE_NAMES = [
+            r'$\omega_x$', r'$\omega_y$', r'$\omega_z$',
+            r'$\alpha$',   r'$\beta$',   r'$\gamma$',
+            r'$v_x$',      r'$v_y$',      r'$v_z$',
+            r'$x$',        r'$y$',        r'$z$']
+
+        self.red_state_names = [FULL_STATE_NAMES[i] for i in self.x_ids]
 
         self._setup_controller()
 
