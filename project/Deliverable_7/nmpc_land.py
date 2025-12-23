@@ -173,7 +173,7 @@ class NmpcCtrl_Tuned1(NmpcCtrl):
     wx_max = np.deg2rad(60)
     vy_max = 5.0
 
-    vz_max = 5.0
+    vz_max = 10.0
     P_max = 80
 
     x_max = 100
@@ -193,7 +193,7 @@ class NmpcCtrl_Tuned1(NmpcCtrl):
     Q[10,10] *= 550    # y
     Q[6,6]   *= 0.95   # vx
     Q[7,7]   *= 0.95   # vy
-    Q[8,8]   *= 0.5    # vz small to allow dive
+    Q[8,8]   *= 2      # vz small to allow dive. (note vz_max > vx_max = vy_max3)
 
     R = np.diag([1 * (1/(d1_max**2)), 1 * (1/(d2_max**2)), 1 * (1/(P_max**2)), 1 * (1/(Pdiff_max**2))])
 
