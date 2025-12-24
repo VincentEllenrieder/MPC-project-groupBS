@@ -7,26 +7,16 @@ class MPCControl_roll(MPCControl_base):
     x_ids: np.ndarray = np.array([2, 5])
     u_ids: np.ndarray = np.array([3])
 
-    def _setup_controller(self) -> None:
-        #################################################
-        # YOUR CODE HERE
+    wz_max    = np.deg2rad(120)
+    gamma_max = np.deg2rad(30)
+    pdiff_max = 20.0
 
-        self.ocp = ...
+    Q = np.diag([
+        1/(wz_max**2),
+        0.75 * 1/(gamma_max**2),
+    ])
 
-        # YOUR CODE HERE
-        #################################################
+    R = np.array([[1/(pdiff_max**2) * 1.5]])
 
-    def get_u(
-        self, x0: np.ndarray, x_target: np.ndarray = None, u_target: np.ndarray = None
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        #################################################
-        # YOUR CODE HERE
+    subsys_name = 'roll'
 
-        u0 = ...
-        x_traj = ...
-        u_traj = ...
-
-        # YOUR CODE HERE
-        #################################################
-
-        return u0, x_traj, u_traj

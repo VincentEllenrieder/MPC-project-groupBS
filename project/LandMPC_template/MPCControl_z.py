@@ -198,14 +198,7 @@ class MPCControl_z(MPCControl_base):
         plt.show()
 
 
-    def min_robust_invariant_set(
-        self,
-        A_cl: np.ndarray,
-        W: Polyhedron,
-        max_iter: int = 50,
-        plot_evolution: bool = True,
-        plot_dims=(0, 1),
-    ) -> Polyhedron:
+    def min_robust_invariant_set(self, A_cl: np.ndarray, W: Polyhedron, max_iter: int = 50, plot_evolution: bool = False, plot_dims=(0, 1),) -> Polyhedron:
         nx = A_cl.shape[0]
         Omega = W
         self.Omega_hist = []

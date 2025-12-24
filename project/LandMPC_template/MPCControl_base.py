@@ -21,6 +21,8 @@ class MPCControl_base:
     Ts: float
     H: float
     N: int
+    Q: np.ndarray
+    R: np.ndarray
     subsys_name: str
     UBX: np.ndarray
     LBX: np.ndarray
@@ -92,13 +94,50 @@ class MPCControl_base:
         self._setup_controller()
 
     def _setup_controller(self) -> None:
-        #################################################
-        # YOUR CODE HERE
+        
+        self.x_var = cp.Variable((self.nx, self.N + 1), name='x')
+        self.u_var = cp.Variable((self.nu, self.N), name='u')
+        self.x0_par = cp.Parameter((self.nx,), name='x0')
+        # Add Slack
+        if self.nx == 4:
+            self.eps_var = cp.Variable((1, self.N + 1), nonneg=True, name="epsilon") # eps => 0 incorporated here
+            S = np.array([[1e4]])
+            # rho = getattr(self, "rho_slack", 1e4) # needed ?
+        else :
+            self.eps_var = np.zeros((1, self.N + 1))
+            S = np.array([[0]])
+        
+        x_diff = self.x_var - cp.reshape(self.xs, (self.nx, 1))
+        u_diff = self.u_var - cp.reshape(self.us, (self.nu, 1))
 
-        self.ocp = ...
+        # Costs (objective function)
+        cost = 0
+        for k in range(self.N):
+            cost += cp.quad_form(x_diff[:,k], self.Q)
+            cost += cp.quad_form(u_diff[:,k], self.R)
 
-        # YOUR CODE HERE
-        #################################################
+            # penalize slack (only on softened components -> S is diagonal)
+            cost += cp.quad_form(self.eps_var[:, k], S)
+        
+        # Terminal cost
+        _, P, _ = dlqr(self.A, self.B, self.Q, self.R)
+        cost += cp.quad_form(x_diff[:, -1], P)  
+        cost += cp.quad_form(self.eps_var[:, -1], S)      
+
+        # System (equality) constraint
+        constraints = []
+        constraints.append(self.x_var[:, 0] == self.x0_par)
+        constraints.append(self.A @ (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, :-1] + self.B @ (self.u_var - cp.reshape(self.us, (self.nu, 1))) == (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, 1:]) # x^+ - xs = A(x-xs) + B(u-us)
+
+        # Inequality constraints
+
+        constraints.append(self.U.A @ self.u_var <= self.U.b.reshape(-1, 1)) # u in U for all k = 0, ..., N-1
+
+        # Hard bounds for everyone, except softened indices get slack
+        # applies to all k = 0...N
+        constraints.append(self.X.A @ self.x_var <= self.X.b.reshape(-1, 1) + np.ones((self.X.A.shape[0], 1)) @ (self.eps_var)) # x in X + eps for all k = 0, ..., N
+
+        self.ocp = cp.Problem(cp.Minimize(cost), constraints)
 
     @staticmethod
     def _discretize(A: np.ndarray, B: np.ndarray, Ts: float):
@@ -111,14 +150,23 @@ class MPCControl_base:
     def get_u(
         self, x0: np.ndarray, x_target: np.ndarray = None, u_target: np.ndarray = None
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        #################################################
-        # YOUR CODE HERE
+        
+        self.x0_par.value = x0
 
-        u0 = ...
-        x_traj = ...
-        u_traj = ...
-
-        # YOUR CODE HERE
-        #################################################
+        #self.ocp.solve()
+        self.ocp.solve(
+            solver=cp.PIQP,
+            warm_start=True,
+            max_iter=20000,
+            eps_abs=1e-4,
+            eps_rel=1e-4
+        )
+        
+        if self.ocp.status not in ("optimal", "optimal_inaccurate"):
+            raise RuntimeError(f"QP problem failed: {self.ocp.status}")
+        
+        u0 = self.u_var.value[:, 0]
+        x_traj = self.x_var.value
+        u_traj = self.u_var.value
 
         return u0, x_traj, u_traj
