@@ -98,14 +98,15 @@ class MPCControl_base:
         self.x_var = cp.Variable((self.nx, self.N + 1), name='x')
         self.u_var = cp.Variable((self.nu, self.N), name='u')
         self.x0_par = cp.Parameter((self.nx,), name='x0')
-        # Add Slack
+        
+        # Define Slack variable and penalty
         if self.nx == 4:
-            self.eps_var = cp.Variable((1, self.N + 1), nonneg=True, name="epsilon") # eps => 0 incorporated here
-            S = np.array([[1e4]])
-            # rho = getattr(self, "rho_slack", 1e4) # needed ?
+            self.eps_var = cp.Variable((1, self.N + 1), nonneg=True, name="epsilon") # eps greater or equal to 0 implemented here
+            S = np.array([[1]])
         else :
             self.eps_var = np.zeros((1, self.N + 1))
             S = np.array([[0]])
+        self.rho_par = cp.Parameter(nonneg=True, name='rho')
         
         x_diff = self.x_var - cp.reshape(self.xs, (self.nx, 1))
         u_diff = self.u_var - cp.reshape(self.us, (self.nu, 1))
@@ -115,27 +116,28 @@ class MPCControl_base:
         for k in range(self.N):
             cost += cp.quad_form(x_diff[:,k], self.Q)
             cost += cp.quad_form(u_diff[:,k], self.R)
-
-            # penalize slack (only on softened components -> S is diagonal)
-            cost += cp.quad_form(self.eps_var[:, k], S)
+            # penalize slack
+            cost += self.rho_par * cp.quad_form(self.eps_var[:, k], S)
         
         # Terminal cost
         _, P, _ = dlqr(self.A, self.B, self.Q, self.R)
         cost += cp.quad_form(x_diff[:, -1], P)  
-        cost += cp.quad_form(self.eps_var[:, -1], S)      
+        # penalize slack
+        cost += self.rho_par * cp.quad_form(self.eps_var[:, -1], S)      
 
         # System (equality) constraint
         constraints = []
         constraints.append(self.x_var[:, 0] == self.x0_par)
-        constraints.append(self.A @ (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, :-1] + self.B @ (self.u_var - cp.reshape(self.us, (self.nu, 1))) == (self.x_var - cp.reshape(self.xs, (self.nx, 1)))[:, 1:]) # x^+ - xs = A(x-xs) + B(u-us)
+        constraints.append(self.A @ x_diff[:, :-1] + self.B @ u_diff == x_diff[:, 1:]) # x^+ - xs = A(x-xs) + B(u-us)
 
         # Inequality constraints
 
         constraints.append(self.U.A @ self.u_var <= self.U.b.reshape(-1, 1)) # u in U for all k = 0, ..., N-1
 
-        # Hard bounds for everyone, except softened indices get slack
-        # applies to all k = 0...N
-        constraints.append(self.X.A @ self.x_var <= self.X.b.reshape(-1, 1) + np.ones((self.X.A.shape[0], 1)) @ (self.eps_var)) # x in X + eps for all k = 0, ..., N
+        # Bounded states get softened constraints
+        # x in X + eps for all k = 0, ..., N. X.A is a m x nx matrix, where m is twice the number of bounded states in the system
+        # so, in this formulation, only the bounded state has a soft constraint.
+        constraints.append(self.X.A @ self.x_var <= self.X.b.reshape(-1, 1) + np.ones((self.X.A.shape[0], 1)) @ (self.eps_var)) 
 
         self.ocp = cp.Problem(cp.Minimize(cost), constraints)
 
@@ -152,6 +154,7 @@ class MPCControl_base:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         
         self.x0_par.value = x0
+        self.rho_par.value = 1e4
 
         #self.ocp.solve()
         self.ocp.solve(
