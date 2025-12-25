@@ -7,26 +7,18 @@ class MPCControl_y(MPCControl_base):
     x_ids: np.ndarray = np.array([0, 3, 7, 10])
     u_ids: np.ndarray = np.array([0])
 
-    def _setup_controller(self) -> None:
-        #################################################
-        # YOUR CODE HERE
+    alpha_max = np.deg2rad(10)
+    d1_max   = np.deg2rad(15)
+    wx_max = np.deg2rad(60)
+    vy_max = 5.0
 
-        self.ocp = ...
+    Q = np.diag([
+        60 * 1/(wx_max**2),
+        8 *1/(alpha_max**2),
+        60 * 1/(vy_max**2),
+        50
+    ])
 
-        # YOUR CODE HERE
-        #################################################
+    R = np.array([[(5 * 1/(d1_max**2))]])
 
-    def get_u(
-        self, x0: np.ndarray, x_target: np.ndarray = None, u_target: np.ndarray = None
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        #################################################
-        # YOUR CODE HERE
-
-        u0 = ...
-        x_traj = ...
-        u_traj = ...
-
-        # YOUR CODE HERE
-        #################################################
-
-        return u0, x_traj, u_traj
+    subsys_name = 'y'
