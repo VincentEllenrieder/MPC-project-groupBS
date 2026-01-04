@@ -44,12 +44,7 @@ class MPCControl_z(MPCControl_base):
         # Sets definitions
         self.K = -place(self.A, self.B, [0.61, 0.6])
         self.min_inv_set_stop_condition = 1e-2
-        print('Min invariant set stopping criterion :', self.min_inv_set_stop_condition)
-        print('A =', self.A)
-        print('B =', self.B)
-        print('K =', self.K)
         A_cl = self.A + self.B @ self.K 
-        print('Closed-loop control eigenvalues:', np.linalg.eig(A_cl).eigenvalues)
     
         self.E = self.min_robust_invariant_set(A_cl, self.W.affine_map(self.B)) # A_cl is nx x nx but W is a 1D set, as given in project description, we use B @ w to map w from 1D to the state dimension nx = 2
         KE = self.E.affine_map(self.K)  
@@ -67,7 +62,7 @@ class MPCControl_z(MPCControl_base):
         constraints.append(self.U_tilde.A @ self.v_var <= self.U_tilde.b.reshape(-1, 1))           # v in U_tilde for all k = 1,..., N-1
 
         # Terminal constraint 
-        K_f = -place(self.A, self.B, [0.75, 0.8])
+        K_f = -K_lqr
         self.X_tilde_delta = Polyhedron.from_Hrep(X_tilde.A, X_tilde.b - (X_tilde.A @ self.xs.reshape(-1, 1)).reshape(-1)) # shifted X_tilde around xs
         self.U_tilde_delta = Polyhedron.from_Hrep(self.U_tilde.A, self.U_tilde.b - (self.U_tilde.A @ self.us.reshape(-1, 1)).reshape(-1)) # shifted U_tilde around us
         self.KU_tilde_delta = Polyhedron.from_Hrep(self.U_tilde_delta.A @ K_f, self.U_tilde_delta.b)
@@ -90,7 +85,12 @@ class MPCControl_z(MPCControl_base):
 
         self.x0_par.value = x0
 
-        self.ocp.solve()
+        self.ocp.solve(
+            solver=cp.PIQP,
+            warm_start=True,
+            eps_abs=1e-4,
+            eps_rel=1e-4
+        )
 
         if self.ocp.status not in ("optimal", "optimal_inaccurate"):
             raise RuntimeError(f"QP problem failed: {self.ocp.status}")
