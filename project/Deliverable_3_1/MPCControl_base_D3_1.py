@@ -185,7 +185,7 @@ class MPCControl_base:
         return u0, x_traj, u_traj
     
     @staticmethod
-    def _max_invariant_set(A_cl: np.ndarray, X_int_KU: Polyhedron, max_iter = 50) -> Polyhedron:
+    def _max_invariant_set(A_cl: np.ndarray, X_int_KU: Polyhedron, max_iter = 100) -> Polyhedron:
         Omega = X_int_KU
         i = 0
         while i < max_iter :
@@ -201,6 +201,8 @@ class MPCControl_base:
             print("Not yet convgerged at iteration {0}" .format(i+1))
             Omega = Omega_new
             i += 1
+            if i == max_iter:
+                print("max iterations reached, exitting...")
         return Omega
 
     
