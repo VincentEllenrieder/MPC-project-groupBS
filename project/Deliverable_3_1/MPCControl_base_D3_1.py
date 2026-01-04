@@ -202,7 +202,7 @@ class MPCControl_base:
             Omega = Omega_new
             i += 1
             if i == max_iter:
-                print("max iterations reached, exitting...")
+                print("max iterations reached, exiting...")
         return Omega
 
     
