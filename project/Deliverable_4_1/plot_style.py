@@ -1,11 +1,8 @@
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from cycler import cycler
-import scienceplots
 
 def set_mpc_style():
-    # Apply SciencePlots first
-    plt.style.use(["science", "nature"])
 
     # Override TeX and fonts
     mpl.rcParams.update({
